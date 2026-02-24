@@ -1,0 +1,23 @@
+{
+  "name": "erc8004-trading-agent",
+  "version": "0.1.0",
+  "description": "Autonomous AI trading agent with on-chain ERC-8004 identity and reputation",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "dashboard"
+  ],
+  "scripts": {
+    "test": "npm run test --workspace=contracts",
+    "build": "npm run build --workspace=contracts && npm run build --workspace=dashboard",
+    "deploy:sepolia": "npm run deploy:sepolia --workspace=contracts"
+  },
+  "keywords": [
+    "erc8004",
+    "trading-agent",
+    "ai",
+    "ethereum",
+    "defi"
+  ],
+  "license": "MIT"
+}

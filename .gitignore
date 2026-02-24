@@ -1,0 +1,47 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+contracts/deployments/
+
+# Environment
+.env
+.env.local
+.env.*.local
+agent/.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Hardhat
+contracts/coverage/
+contracts/coverage.json
