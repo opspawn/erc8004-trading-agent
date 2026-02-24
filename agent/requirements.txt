@@ -12,3 +12,9 @@ schedule==1.2.2
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 anyio>=4.0.0
+
+# Sprint 3: Claude AI, dashboard, risk management
+anthropic>=0.45.0
+fastapi>=0.115.0
+uvicorn>=0.34.0
+httpx>=0.28.0

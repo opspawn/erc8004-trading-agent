@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ERC-8004 Trading Agent Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0e1a;
+      color: #c9d1d9;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      color: #58a6ff;
+      margin-bottom: 4px;
+      letter-spacing: 0.05em;
+    }
+
+    .subtitle {
+      font-size: 0.75rem;
+      color: #6e7681;
+      margin-bottom: 24px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .card-label {
+      font-size: 0.7rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .card-value {
+      font-size: 1.8rem;
+      font-weight: bold;
+    }
+
+    .card-value.green { color: #3fb950; }
+    .card-value.red   { color: #f85149; }
+    .card-value.blue  { color: #58a6ff; }
+    .card-value.gold  { color: #e3b341; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: bold;
+    }
+    .pill.ok     { background: #1a3a2a; color: #3fb950; border: 1px solid #3fb950; }
+    .pill.halted { background: #3a1a1a; color: #f85149; border: 1px solid #f85149; }
+
+    .section-title {
+      font-size: 0.8rem;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #30363d;
+    }
+
+    .reasoning-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+    }
+
+    .reasoning-text {
+      font-size: 0.85rem;
+      color: #c9d1d9;
+      line-height: 1.5;
+      margin-top: 8px;
+    }
+
+    .badge {
+      display: inline-block;
+      background: #1c2a3a;
+      color: #58a6ff;
+      border: 1px solid #30363d;
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-size: 0.7rem;
+      margin-right: 6px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.8rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 8px 10px;
+      color: #8b949e;
+      font-weight: normal;
+      border-bottom: 1px solid #30363d;
+    }
+
+    td {
+      padding: 7px 10px;
+      border-bottom: 1px solid #21262d;
+      vertical-align: top;
+    }
+
+    tr:hover td { background: #1c2128; }
+
+    .outcome-win     { color: #3fb950; }
+    .outcome-loss    { color: #f85149; }
+    .outcome-pending { color: #e3b341; }
+
+    .trades-box {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 24px;
+      overflow-x: auto;
+    }
+
+    .refresh-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 0.75rem;
+      color: #6e7681;
+      margin-bottom: 16px;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #3fb950;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    .risk-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.8rem;
+      padding: 4px 0;
+      border-bottom: 1px solid #21262d;
+    }
+    .risk-row:last-child { border-bottom: none; }
+    .risk-key { color: #8b949e; }
+    .risk-val { color: #c9d1d9; }
+
+    .error { color: #f85149; font-size: 0.8rem; padding: 8px; }
+
+    footer {
+      margin-top: 32px;
+      font-size: 0.7rem;
+      color: #6e7681;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>⬡ ERC-8004 Trading Agent</h1>
+  <p class="subtitle">Autonomous prediction market agent with x402 micropayments &amp; on-chain reputation</p>
+
+  <div class="refresh-bar">
+    <div class="dot"></div>
+    <span id="refresh-status">Connecting...</span>
+  </div>
+
+  <!-- Key Metrics Grid -->
+  <div class="grid">
+    <div class="card">
+      <div class="card-label">Total P&amp;L</div>
+      <div class="card-value" id="pnl">$0.00</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Reputation Score</div>
+      <div class="card-value gold" id="rep-score">0.00</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Open Positions</div>
+      <div class="card-value blue" id="open-pos">0</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Tests Passing</div>
+      <div class="card-value green" id="tests-pass">0</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Risk Status</div>
+      <div id="risk-status-pill" style="margin-top:8px;"><span class="pill ok">ACTIVE</span></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Daily P&amp;L</div>
+      <div class="card-value" id="daily-pnl">$0.00</div>
+    </div>
+  </div>
+
+  <!-- Last Trade Decision -->
+  <div class="reasoning-box">
+    <div class="section-title">Last Claude Decision</div>
+    <div id="last-trade-info" class="reasoning-text" style="color:#6e7681;">No trades yet.</div>
+  </div>
+
+  <!-- Reputation Details -->
+  <div class="reasoning-box">
+    <div class="section-title">Reputation Details</div>
+    <div id="rep-details" class="reasoning-text" style="color:#6e7681;">Loading...</div>
+  </div>
+
+  <!-- Risk Summary -->
+  <div class="reasoning-box">
+    <div class="section-title">Risk Parameters</div>
+    <div id="risk-details">Loading...</div>
+  </div>
+
+  <!-- Recent Trades Table -->
+  <div class="trades-box">
+    <div class="section-title">Recent Trades</div>
+    <table>
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Market</th>
+          <th>Side</th>
+          <th>Size</th>
+          <th>Outcome</th>
+          <th>P&amp;L</th>
+        </tr>
+      </thead>
+      <tbody id="trades-tbody">
+        <tr><td colspan="6" style="color:#6e7681;text-align:center;">Loading trades...</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <footer>
+    ERC-8004 Trading Agent &bull; opspawn.com &bull; Built with x402 + Claude AI
+    &bull; <a href="/docs" style="color:#58a6ff;">API Docs</a>
+  </footer>
+
+<script>
+  const BASE = '';
+  let lastRefresh = null;
+
+  function fmt(v) {
+    return v !== undefined && v !== null ? v : '—';
+  }
+
+  function fmtUsd(v) {
+    if (v === undefined || v === null) return '$0.00';
+    const n = parseFloat(v);
+    const s = Math.abs(n).toFixed(4);
+    return (n < 0 ? '-$' : '$') + s;
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    try {
+      return new Date(iso).toLocaleTimeString();
+    } catch(e) { return iso; }
+  }
+
+  function setEl(id, html) {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = html;
+  }
+
+  async function fetchAll() {
+    try {
+      const [statusR, tradesR, repR] = await Promise.all([
+        fetch(BASE + '/status'),
+        fetch(BASE + '/trades?limit=15'),
+        fetch(BASE + '/reputation'),
+      ]);
+
+      const status = await statusR.json();
+      const trades = await tradesR.json();
+      const rep    = await repR.json();
+
+      renderStatus(status);
+      renderTrades(trades);
+      renderReputation(rep);
+
+      lastRefresh = new Date();
+      setEl('refresh-status',
+        'Live &mdash; last updated ' + lastRefresh.toLocaleTimeString()
+      );
+    } catch(e) {
+      setEl('refresh-status', '<span class="error">Connection error: ' + e.message + '</span>');
+    }
+  }
+
+  function renderStatus(s) {
+    // PnL
+    const pnl = s.total_pnl || 0;
+    const pnlEl = document.getElementById('pnl');
+    if (pnlEl) {
+      pnlEl.textContent = fmtUsd(pnl);
+      pnlEl.className = 'card-value ' + (pnl >= 0 ? 'green' : 'red');
+    }
+
+    // Daily PnL
+    const risk = s.risk_summary || {};
+    const dpnl = risk.daily_pnl_usdc || 0;
+    const dpEl = document.getElementById('daily-pnl');
+    if (dpEl) {
+      dpEl.textContent = fmtUsd(dpnl);
+      dpEl.className = 'card-value ' + (dpnl >= 0 ? 'green' : 'red');
+    }
+
+    setEl('open-pos', fmt(s.active_positions));
+    setEl('tests-pass', fmt(s.tests_passing));
+
+    // Risk status pill
+    const halted = s.trading_halted;
+    setEl('risk-status-pill',
+      halted
+        ? '<span class="pill halted">HALTED</span><br><small style="color:#f85149;font-size:0.7rem;">' + (risk.halt_reason || '') + '</small>'
+        : '<span class="pill ok">ACTIVE</span>'
+    );
+
+    // Last trade
+    const lt = s.last_trade;
+    if (lt) {
+      const x402badge = lt.signal_purchased
+        ? '<span class="badge">x402 signal</span>'
+        : '';
+      setEl('last-trade-info',
+        x402badge +
+        '<strong>' + fmt(lt.action || lt.side) + '</strong> on ' +
+        '<em>' + fmt(lt.question || lt.market_id) + '</em><br>' +
+        'Confidence: ' + ((lt.confidence || 0) * 100).toFixed(0) + '% &bull; ' +
+        'Size: ' + fmtUsd(lt.size_usdc) + '<br>' +
+        '<span style="color:#8b949e;">' + fmt(lt.reasoning) + '</span>'
+      );
+    }
+
+    // Risk parameters
+    const limits = risk.limits || {};
+    const rows = [
+      ['Max position', ((limits.max_position_pct || 0) * 100).toFixed(0) + '%'],
+      ['Max exposure', ((limits.max_exposure_pct || 0) * 100).toFixed(0) + '%'],
+      ['Stop-loss', ((limits.stop_loss_pct || 0) * 100).toFixed(0) + '%'],
+      ['Daily drawdown limit', ((limits.max_daily_drawdown_pct || 0) * 100).toFixed(0) + '%'],
+      ['Max leverage', (limits.max_leverage || 0) + 'x'],
+      ['Max open positions', limits.max_open_positions || 0],
+      ['Current exposure', fmtUsd(risk.total_exposure_usdc || 0)],
+    ];
+    setEl('risk-details',
+      rows.map(([k, v]) =>
+        '<div class="risk-row"><span class="risk-key">' + k + '</span><span class="risk-val">' + v + '</span></div>'
+      ).join('')
+    );
+  }
+
+  function renderTrades(trades) {
+    if (!trades || trades.length === 0) {
+      setEl('trades-tbody',
+        '<tr><td colspan="6" style="color:#6e7681;text-align:center;">No trades yet.</td></tr>'
+      );
+      return;
+    }
+    const rows = [...trades].reverse().map(t => {
+      const oc = (t.outcome || '').toUpperCase();
+      const cls = oc === 'WIN' ? 'outcome-win' : oc === 'LOSS' ? 'outcome-loss' : 'outcome-pending';
+      const pnl = parseFloat(t.pnl_usdc || 0);
+      const pnlCls = pnl >= 0 ? 'outcome-win' : 'outcome-loss';
+      return '<tr>' +
+        '<td>' + fmtTime(t.executed_at) + '</td>' +
+        '<td style="max-width:200px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;" title="' + fmt(t.question) + '">' + fmt(t.question || t.market_id) + '</td>' +
+        '<td>' + fmt(t.side) + '</td>' +
+        '<td>' + fmtUsd(t.size_usdc) + '</td>' +
+        '<td class="' + cls + '">' + fmt(t.outcome || 'PENDING') + '</td>' +
+        '<td class="' + pnlCls + '">' + fmtUsd(t.pnl_usdc) + '</td>' +
+        '</tr>';
+    }).join('');
+    setEl('trades-tbody', rows);
+  }
+
+  function renderReputation(rep) {
+    const score = parseFloat(rep.aggregate_score || 0).toFixed(2);
+    setEl('rep-score', score + ' / 10');
+
+    const winRate = ((rep.win_rate || 0) * 100).toFixed(1);
+    setEl('rep-details',
+      'Agent ID: <strong>' + fmt(rep.agent_id) + '</strong><br>' +
+      'Total feedback: <strong>' + fmt(rep.total_feedback) + '</strong> &bull; ' +
+      'On-chain: <strong>' + fmt(rep.on_chain_count) + '</strong><br>' +
+      'Wins: <strong class="outcome-win">' + fmt(rep.win_count) + '</strong> &bull; ' +
+      'Losses: <strong class="outcome-loss">' + fmt(rep.loss_count) + '</strong> &bull; ' +
+      'Win rate: <strong>' + winRate + '%</strong>'
+    );
+  }
+
+  // Initial fetch + poll every 10s
+  fetchAll();
+  setInterval(fetchAll, 10000);
+</script>
+</body>
+</html>

@@ -30,6 +30,8 @@ from web3 import Web3
 from limitless import LimitlessClient
 from registry import ERC8004Registry
 from reputation import ReputationLogger
+from risk_manager import RiskManager
+from claude_strategist import ClaudeStrategist
 from trader import Market, TradingStrategy
 from validator import TradeValidator
 from x402_client import X402Client, create_x402_client
@@ -141,6 +143,18 @@ class TradingAgent:
             registry=None if dry_run else self.registry,
             agent_id=0,
             dry_run=dry_run,
+        )
+
+        # Sprint 3: Risk manager + Claude strategist
+        self.risk_manager = RiskManager(
+            max_position_pct=float(os.getenv("MAX_POSITION_PCT", "0.10")),
+            max_daily_drawdown_pct=float(os.getenv("MAX_DAILY_DRAWDOWN_PCT", "0.05")),
+            max_open_positions=int(os.getenv("MAX_OPEN_POSITIONS", "5")),
+        )
+        self.claude_strategist = ClaudeStrategist(
+            api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+            x402_client=self.x402,
+            enable_x402_signals=True,
         )
 
         self.agent_id: int = 0
