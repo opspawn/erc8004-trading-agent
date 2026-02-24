@@ -27,9 +27,12 @@ from eth_account import Account
 from loguru import logger
 from web3 import Web3
 
+from limitless import LimitlessClient
 from registry import ERC8004Registry
+from reputation import ReputationLogger
 from trader import Market, TradingStrategy
 from validator import TradeValidator
+from x402_client import X402Client, create_x402_client
 
 load_dotenv()
 
@@ -127,6 +130,19 @@ class TradingAgent:
         self.strategy = TradingStrategy(dry_run=dry_run)
         self.validator = TradeValidator(registry=None if dry_run else self.registry)
 
+        # Sprint 2: x402 client, Limitless integration, reputation logger
+        self.x402 = create_x402_client(account=account, demo_mode=dry_run)
+        self.limitless = LimitlessClient(
+            account=account,
+            x402_client=self.x402,
+            demo_mode=dry_run,
+        )
+        self.reputation = ReputationLogger(
+            registry=None if dry_run else self.registry,
+            agent_id=0,
+            dry_run=dry_run,
+        )
+
         self.agent_id: int = 0
         self.cycle = 0
 
@@ -153,11 +169,22 @@ class TradingAgent:
             logger.info("[DRY RUN] Skipping on-chain registration")
             self.agent_id = 1  # Mock agent ID
 
+        self.reputation.set_agent_id(self.agent_id)
+
     async def scan_markets(self) -> list[Market]:
-        """Scan for trading opportunities."""
-        # TODO: Replace with Polymarket/Manifold API call
-        markets = get_sample_markets()
-        logger.info(f"Scanned {len(markets)} markets")
+        """Scan for trading opportunities from Limitless Exchange (via x402)."""
+        limitless_markets = await self.limitless.fetch_markets(limit=20, trade_type="clob")
+        if limitless_markets:
+            markets = [m.to_trader_market() for m in limitless_markets]
+            logger.info(f"Fetched {len(markets)} markets from Limitless Exchange")
+            logger.info(
+                f"x402 payments this session: {self.x402.ledger.total_payments} "
+                f"(${self.x402.ledger.total_spent_usdc:.4f} USDC)"
+            )
+        else:
+            # Fallback to sample markets if API unreachable
+            markets = get_sample_markets()
+            logger.info(f"Using {len(markets)} fallback sample markets")
         return markets
 
     async def trading_cycle(self) -> None:
@@ -202,11 +229,26 @@ class TradingAgent:
                     f"[DRY RUN] Validation artifact: checksum={artifact.checksum[:16]}..."
                 )
 
-        # 5. Performance summary
+            # 5. Log reputation to ERC-8004 ReputationRegistry
+            rep_entry = await self.reputation.log_trade(result)
+            if rep_entry:
+                logger.info(
+                    f"Reputation: trade={rep_entry.trade_id[:30]}... "
+                    f"score={rep_entry.score}/1000 "
+                    f"{'[ON-CHAIN]' if rep_entry.on_chain else '[LOCAL]'}"
+                )
+
+        # 6. Performance summary
         summary = self.strategy.get_performance_summary()
+        rep_stats = self.reputation.get_stats()
         logger.info(
             f"Performance: {summary['total_trades']} trades, "
             f"PnL=${summary['total_pnl_usdc']:.2f}"
+        )
+        logger.info(
+            f"Reputation: score={rep_stats.aggregate_score:.2f}/10 "
+            f"({rep_stats.total_feedback} feedback entries, "
+            f"{rep_stats.on_chain_count} on-chain)"
         )
 
     async def run(self, once: bool = False) -> None:
