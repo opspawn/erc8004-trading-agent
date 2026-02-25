@@ -345,3 +345,50 @@ class RiskManager:
         self._trading_halted = False
         self._halt_reason = ""
         logger.info("RiskManager: trading halt cleared by operator")
+
+    # ─── Oracle Risk Check ────────────────────────────────────────────────────
+
+    def check_oracle_risk(
+        self,
+        amount: float,
+        oracle_price: float,
+        max_deviation_pct: float = 0.05,
+    ) -> bool:
+        """
+        Validate a trade amount against an oracle price using a deviation threshold.
+
+        Mirrors the on-chain RiskRouter.checkRisk() logic in Python so that the
+        agent can pre-screen trades before broadcasting them on-chain.
+
+        Args:
+            amount:            Proposed trade amount (in the same units as oracle_price)
+            oracle_price:      Current oracle price (e.g. from OracleClient.fetch_eth_price())
+            max_deviation_pct: Maximum allowed deviation from oracle price (default 5%)
+
+        Returns:
+            True if the trade passes the oracle risk check, False otherwise.
+        """
+        if oracle_price <= 0:
+            logger.warning("RiskManager.check_oracle_risk: invalid oracle_price")
+            return False
+
+        if amount <= 0:
+            logger.warning("RiskManager.check_oracle_risk: non-positive amount rejected")
+            return False
+
+        deviation = abs(amount - oracle_price) / oracle_price
+        allowed = deviation <= max_deviation_pct
+
+        if allowed:
+            logger.debug(
+                f"RiskManager.check_oracle_risk: PASS "
+                f"amount={amount} oracle={oracle_price} deviation={deviation:.2%}"
+            )
+        else:
+            logger.info(
+                f"RiskManager.check_oracle_risk: FAIL "
+                f"amount={amount} oracle={oracle_price} "
+                f"deviation={deviation:.2%} > max={max_deviation_pct:.2%}"
+            )
+
+        return allowed

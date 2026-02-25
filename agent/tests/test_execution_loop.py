@@ -404,3 +404,97 @@ class TestRunCycle:
         el = ExecutionLoop(config=config, market_data=md)
         result = await el.run_cycle()
         assert el.metrics.errors_last_hour >= 1
+
+
+# ─── Reputation Self-Loop ──────────────────────────────────────────────────────
+
+
+class TestReputationSelfLoop:
+    """6 integration tests verifying give_feedback() is called after trades."""
+
+    def _make_components(self, config, outcome: str = "WIN"):
+        """Build mock market_data, strategist, trader, reputation for a full cycle."""
+        md = AsyncMock()
+        md.tracked_symbols = ["ETH"]
+        md.fetch_price = AsyncMock(return_value=3200.0)
+
+        decision = MagicMock()
+        decision.action = "buy"
+        decision.size_pct = 0.05
+
+        strategist = AsyncMock()
+        strategist.decide = AsyncMock(return_value=decision)
+
+        trade_result = MagicMock()
+        trade_result.pnl_usdc = 1.0 if outcome == "WIN" else -1.0
+        trade_result.outcome = outcome
+
+        trader = AsyncMock()
+        trader.execute = AsyncMock(return_value=trade_result)
+
+        reputation = AsyncMock()
+        reputation.log_trade = AsyncMock(return_value=None)
+        reputation.give_feedback = AsyncMock(return_value=None)
+
+        return md, strategist, trader, reputation, trade_result
+
+    @pytest.mark.asyncio
+    async def test_reputation_give_feedback_called_after_win(self, config, tmp_state_file):
+        """give_feedback() should be called once after a winning trade."""
+        md, strat, trader, reputation, _ = self._make_components(config, "WIN")
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        await el.run_cycle()
+        reputation.give_feedback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_reputation_give_feedback_called_after_loss(self, config, tmp_state_file):
+        """give_feedback() should be called once after a losing trade."""
+        md, strat, trader, reputation, _ = self._make_components(config, "LOSS")
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        await el.run_cycle()
+        reputation.give_feedback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_win_gives_value_90(self, config, tmp_state_file):
+        """Winning trades should call give_feedback with value=90."""
+        md, strat, trader, reputation, _ = self._make_components(config, "WIN")
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        await el.run_cycle()
+        call_kwargs = reputation.give_feedback.call_args.kwargs
+        assert call_kwargs.get("value") == 90
+
+    @pytest.mark.asyncio
+    async def test_loss_gives_value_60(self, config, tmp_state_file):
+        """Losing trades should call give_feedback with value=60."""
+        md, strat, trader, reputation, _ = self._make_components(config, "LOSS")
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        await el.run_cycle()
+        call_kwargs = reputation.give_feedback.call_args.kwargs
+        assert call_kwargs.get("value") == 60
+
+    @pytest.mark.asyncio
+    async def test_feedback_uses_defi_swap_tags(self, config, tmp_state_file):
+        """give_feedback() should always use tag1='trading', tag2='defi-swap'."""
+        md, strat, trader, reputation, _ = self._make_components(config, "WIN")
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        await el.run_cycle()
+        kw = reputation.give_feedback.call_args.kwargs
+        assert kw.get("tag1") == "trading"
+        assert kw.get("tag2") == "defi-swap"
+
+    @pytest.mark.asyncio
+    async def test_reputation_error_does_not_break_loop(self, config, tmp_state_file):
+        """If reputation.give_feedback raises, the cycle should still complete."""
+        md, strat, trader, reputation, _ = self._make_components(config, "WIN")
+        reputation.give_feedback = AsyncMock(side_effect=RuntimeError("chain error"))
+
+        el = ExecutionLoop(config=config, market_data=md, strategist=strat,
+                           trader=trader, reputation=reputation)
+        # Should not raise
+        result = await el.run_cycle()
+        assert "emergency_stop_triggered" in result

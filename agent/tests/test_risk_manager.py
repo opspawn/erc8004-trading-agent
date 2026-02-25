@@ -417,3 +417,48 @@ class TestEdgeCases:
         assert 0 < config.stop_loss_pct <= 1.0
         assert 0 < config.max_daily_drawdown_pct <= 1.0
         assert config.max_leverage > 0
+
+
+# ─── Oracle Risk Check ────────────────────────────────────────────────────────
+
+
+class TestCheckOracleRisk:
+    """8 tests for RiskManager.check_oracle_risk() (Priority 3 — Python side)."""
+
+    @pytest.fixture
+    def rm(self):
+        return RiskManager()
+
+    def test_passes_when_amount_equals_oracle(self, rm):
+        """Exact oracle price → 0% deviation → always passes."""
+        assert rm.check_oracle_risk(3000.0, oracle_price=3000.0) is True
+
+    def test_passes_within_five_percent_above(self, rm):
+        """4.9% above oracle → passes default 5% threshold."""
+        amount = 3000.0 * 1.049  # 4.9%
+        assert rm.check_oracle_risk(amount, oracle_price=3000.0) is True
+
+    def test_passes_within_five_percent_below(self, rm):
+        """4.9% below oracle → passes."""
+        amount = 3000.0 * 0.951
+        assert rm.check_oracle_risk(amount, oracle_price=3000.0) is True
+
+    def test_fails_above_threshold(self, rm):
+        """6% above oracle → fails default 5% threshold."""
+        amount = 3000.0 * 1.06
+        assert rm.check_oracle_risk(amount, oracle_price=3000.0) is False
+
+    def test_fails_below_threshold(self, rm):
+        """6% below oracle → fails."""
+        amount = 3000.0 * 0.94
+        assert rm.check_oracle_risk(amount, oracle_price=3000.0) is False
+
+    def test_custom_deviation_threshold(self, rm):
+        """Tight 1% threshold — 2% deviation should fail."""
+        assert rm.check_oracle_risk(3060.0, oracle_price=3000.0, max_deviation_pct=0.01) is False
+
+    def test_rejects_zero_amount(self, rm):
+        assert rm.check_oracle_risk(0.0, oracle_price=3000.0) is False
+
+    def test_rejects_invalid_oracle_price(self, rm):
+        assert rm.check_oracle_risk(3000.0, oracle_price=0.0) is False

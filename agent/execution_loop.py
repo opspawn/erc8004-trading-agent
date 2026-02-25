@@ -329,12 +329,36 @@ class ExecutionLoop:
         return None
 
     async def _update_reputation(self, trade_result: Any) -> None:
-        """Push trade result to on-chain reputation."""
-        if self.reputation:
-            try:
+        """
+        Push trade result to on-chain reputation.
+
+        After each simulated trade close, give structured ERC-8004 feedback:
+          - tag1='trading', tag2='defi-swap' for all DEX trades
+          - value=90 for wins, value=60 for losses (0-100 scale)
+        """
+        if not self.reputation:
+            return
+
+        try:
+            # Standard log_trade call (existing behaviour)
+            if hasattr(self.reputation, "log_trade"):
                 await self.reputation.log_trade(trade_result)
-            except Exception as exc:
-                logger.warning("Reputation update error: {}", exc)
+
+            # Structured give_feedback for the reputation self-loop
+            if hasattr(self.reputation, "give_feedback"):
+                outcome = getattr(trade_result, "outcome", None)
+                value = 90 if outcome == "WIN" else 60
+                await self.reputation.give_feedback(
+                    tag1="trading",
+                    tag2="defi-swap",
+                    value=value,
+                )
+                logger.debug(
+                    "Reputation give_feedback: outcome={} value={}", outcome, value
+                )
+
+        except Exception as exc:
+            logger.warning("Reputation update error: {}", exc)
 
     def _check_emergency_stop(self) -> bool:
         """

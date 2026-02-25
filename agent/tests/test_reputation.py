@@ -14,6 +14,8 @@ from reputation import (
     ReputationLogger,
     ReputationStats,
     calculate_trade_score,
+    calculate_pnl_evidence,
+    score_from_pnl,
     build_file_hash,
     REPUTATION_REGISTRY_BASE_SEPOLIA,
     TAG_ACCURACY,
@@ -349,3 +351,141 @@ class TestConstants:
     def test_tags(self):
         assert TAG_ACCURACY == "accuracy"
         assert TAG_TRADING == "trading"
+
+
+# ─── P&L Evidence Tests (ERC-8004 objective outcome requirement) ───────────────
+
+class TestCalculatePnlEvidence:
+
+    def test_profitable_trade(self, win_trade):
+        pnl_pct, trade_size = calculate_pnl_evidence(win_trade)
+        # win_trade: pnl=2.50, size=10.0 → pnl_pct=0.25
+        assert pnl_pct == pytest.approx(0.25)
+        assert trade_size == 10.0
+
+    def test_losing_trade(self, loss_trade):
+        pnl_pct, trade_size = calculate_pnl_evidence(loss_trade)
+        # loss_trade: pnl=-3.0, size=8.0 → pnl_pct=-0.375
+        assert pnl_pct == pytest.approx(-0.375)
+        assert trade_size == 8.0
+
+    def test_pending_trade_zero_pnl(self, pending_trade):
+        pnl_pct, trade_size = calculate_pnl_evidence(pending_trade)
+        assert pnl_pct == 0.0
+        assert trade_size == 5.0
+
+    def test_zero_size_returns_zeros(self, pending_trade):
+        pending_trade.size_usdc = 0.0
+        pnl_pct, trade_size = calculate_pnl_evidence(pending_trade)
+        assert pnl_pct == 0.0
+        assert trade_size == 0.0
+
+    def test_breakeven_trade(self, win_trade):
+        win_trade.pnl_usdc = 0.0
+        pnl_pct, _ = calculate_pnl_evidence(win_trade)
+        assert pnl_pct == 0.0
+
+
+class TestScoreFromPnl:
+
+    def test_large_profit_gives_max_score(self):
+        assert score_from_pnl(0.5) == 950
+        assert score_from_pnl(1.0) == 950  # Capped at 950
+
+    def test_breakeven_gives_500(self):
+        assert score_from_pnl(0.0) == 500
+
+    def test_small_profit_above_500(self):
+        assert score_from_pnl(0.05) > 500
+
+    def test_small_loss_below_500(self):
+        assert score_from_pnl(-0.05) < 500
+
+    def test_large_loss_gives_low_score(self):
+        assert score_from_pnl(-0.5) == 100  # Boundary check
+        assert score_from_pnl(-1.0) == 50   # Extreme loss
+
+    def test_score_monotone_increasing(self):
+        # Higher P&L → higher score
+        scores = [score_from_pnl(p) for p in [-0.5, -0.1, 0.0, 0.1, 0.5]]
+        for i in range(len(scores) - 1):
+            assert scores[i] <= scores[i + 1], f"Not monotone at index {i}"
+
+    def test_score_in_valid_range(self):
+        for pnl in [-1.0, -0.5, -0.1, 0.0, 0.1, 0.5, 1.0]:
+            s = score_from_pnl(pnl)
+            assert 0 <= s <= 1000, f"Score {s} out of range for pnl={pnl}"
+
+
+class TestReputationEntryPnlEvidence:
+
+    def test_pnl_fields_in_dict(self):
+        entry = ReputationEntry(
+            agent_id=1, trade_id="t1", market_id="m1",
+            outcome="WIN", score=850, tag1="accuracy", tag2="trading",
+            tx_hash=None, pnl_usdc=2.5, pnl_pct=0.25, trade_size_usdc=10.0,
+        )
+        d = entry.to_dict()
+        assert d["pnl_usdc"] == 2.5
+        assert d["pnl_pct"] == 0.25
+        assert d["trade_size_usdc"] == 10.0
+
+    def test_default_pnl_fields_zero(self):
+        entry = ReputationEntry(
+            agent_id=1, trade_id="t1", market_id="m1",
+            outcome="PENDING", score=500, tag1="a", tag2="b", tx_hash=None,
+        )
+        assert entry.pnl_usdc == 0.0
+        assert entry.pnl_pct == 0.0
+        assert entry.trade_size_usdc == 0.0
+
+
+class TestGetPnlSummary:
+
+    @pytest.mark.asyncio
+    async def test_empty_logger_returns_zero_summary(self, dry_run_logger):
+        summary = dry_run_logger.get_pnl_summary()
+        assert summary["total_trades"] == 0
+        assert summary["total_pnl_usdc"] == 0.0
+
+    @pytest.mark.asyncio
+    async def test_summary_after_win(self, dry_run_logger, win_trade):
+        await dry_run_logger.log_trade(win_trade)
+        summary = dry_run_logger.get_pnl_summary()
+        assert summary["total_trades"] == 1
+        assert summary["total_pnl_usdc"] == pytest.approx(2.5)
+        assert summary["profitable_trades"] == 1
+        assert summary["losing_trades"] == 0
+
+    @pytest.mark.asyncio
+    async def test_summary_after_loss(self, dry_run_logger, loss_trade):
+        await dry_run_logger.log_trade(loss_trade)
+        summary = dry_run_logger.get_pnl_summary()
+        assert summary["total_pnl_usdc"] == pytest.approx(-3.0)
+        assert summary["losing_trades"] == 1
+
+    @pytest.mark.asyncio
+    async def test_summary_best_worst_trade(
+        self, dry_run_logger, win_trade, loss_trade
+    ):
+        await dry_run_logger.log_trade(win_trade)
+        await dry_run_logger.log_trade(loss_trade)
+        summary = dry_run_logger.get_pnl_summary()
+        assert summary["best_trade_pnl"] == pytest.approx(2.5)
+        assert summary["worst_trade_pnl"] == pytest.approx(-3.0)
+
+    @pytest.mark.asyncio
+    async def test_log_trade_records_pnl_usdc(self, dry_run_logger, win_trade):
+        entry = await dry_run_logger.log_trade(win_trade)
+        assert entry.pnl_usdc == pytest.approx(2.5)
+
+    @pytest.mark.asyncio
+    async def test_log_trade_records_pnl_pct(self, dry_run_logger, win_trade):
+        entry = await dry_run_logger.log_trade(win_trade)
+        # win_trade: pnl=2.5, size=10.0 → 25%
+        assert entry.pnl_pct == pytest.approx(0.25)
+
+    @pytest.mark.asyncio
+    async def test_log_trade_records_trade_size(self, dry_run_logger, win_trade):
+        entry = await dry_run_logger.log_trade(win_trade)
+        assert entry.trade_size_usdc == pytest.approx(10.0)

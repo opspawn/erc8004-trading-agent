@@ -43,7 +43,7 @@ TAG_TRADING = "trading"
 
 @dataclass
 class ReputationEntry:
-    """A single reputation log entry."""
+    """A single reputation log entry with P&L evidence per ERC-8004 spec."""
     agent_id: int
     trade_id: str
     market_id: str
@@ -55,6 +55,12 @@ class ReputationEntry:
     timestamp: float = field(default_factory=time.time)
     on_chain: bool = False      # True if actually submitted to chain
     demo_mode: bool = True
+    # ── P&L Evidence (ERC-8004 spec: reputation must come from objective outcomes) ──
+    pnl_usdc: float = 0.0       # Realized profit/loss in USDC
+    pnl_pct: float = 0.0        # P&L as fraction of trade size
+    trade_size_usdc: float = 0.0  # Capital allocated to this trade
+    entry_price: float = 0.0    # Price at entry (oracle-validated)
+    exit_price: float = 0.0     # Price at resolution
 
     def to_dict(self) -> dict:
         return {
@@ -70,6 +76,11 @@ class ReputationEntry:
             "timestamp": self.timestamp,
             "on_chain": self.on_chain,
             "demo_mode": self.demo_mode,
+            "pnl_usdc": round(self.pnl_usdc, 6),
+            "pnl_pct": round(self.pnl_pct, 6),
+            "trade_size_usdc": self.trade_size_usdc,
+            "entry_price": self.entry_price,
+            "exit_price": self.exit_price,
         }
 
 
@@ -138,6 +149,58 @@ def calculate_trade_score(result: TradeResult) -> int:
         return 500
 
 
+def calculate_pnl_evidence(result: TradeResult) -> tuple[float, float]:
+    """
+    Extract P&L evidence from a trade result.
+
+    Returns:
+        (pnl_pct, trade_size_usdc)
+        pnl_pct: P&L as fraction of trade size (positive = profit, negative = loss)
+        trade_size_usdc: Original capital deployed
+    """
+    trade_size = result.size_usdc
+    if trade_size <= 0:
+        return 0.0, 0.0
+
+    pnl_pct = result.pnl_usdc / trade_size
+    return round(pnl_pct, 6), trade_size
+
+
+def score_from_pnl(pnl_pct: float) -> int:
+    """
+    Compute an ERC-8004 score directly from P&L percentage.
+
+    This provides a continuous score rather than binary WIN/LOSS:
+      - +50% P&L → 950 (excellent)
+      - +10% P&L → 850 (good win)
+      - 0% P&L   → 500 (break even)
+      - -10% P&L → 300 (small loss)
+      - -50% P&L → 100 (large loss)
+
+    Args:
+        pnl_pct: P&L as fraction of trade size (e.g. 0.1 = +10%)
+
+    Returns:
+        Score 0-1000 (ERC-8004 fixed-point, 2 decimal places)
+    """
+    if pnl_pct >= 0.5:
+        return 950
+    elif pnl_pct >= 0.1:
+        # Linear interpolation 0.1 → 850, 0.5 → 950
+        return int(850 + (pnl_pct - 0.1) / 0.4 * 100)
+    elif pnl_pct >= 0.0:
+        # Linear interpolation 0.0 → 500, 0.1 → 850
+        return int(500 + pnl_pct / 0.1 * 350)
+    elif pnl_pct >= -0.1:
+        # Linear interpolation -0.1 → 300, 0.0 → 500
+        return int(500 + pnl_pct / 0.1 * 200)
+    elif pnl_pct >= -0.5:
+        # Linear interpolation -0.5 → 100, -0.1 → 300
+        return int(300 + (pnl_pct + 0.1) / (-0.4) * (-200))
+    else:
+        return 50  # Extreme loss
+
+
 def build_file_hash(result: TradeResult) -> bytes:
     """
     Build a bytes32 file hash for the reputation record.
@@ -201,13 +264,17 @@ class ReputationLogger:
         score = calculate_trade_score(result)
         file_hash = build_file_hash(result)
 
+        # Extract P&L evidence for ERC-8004 spec compliance
+        pnl_pct, trade_size = calculate_pnl_evidence(result)
+
         # Determine tags based on market category / type
         tag1 = TAG_ACCURACY
         tag2 = TAG_TRADING
 
         logger.info(
             f"ReputationLogger: logging trade {trade_id} "
-            f"outcome={result.outcome} score={score}/1000"
+            f"outcome={result.outcome} score={score}/1000 "
+            f"pnl={result.pnl_usdc:+.4f} ({pnl_pct:+.2%})"
         )
 
         if self.dry_run or not self.registry:
@@ -223,6 +290,9 @@ class ReputationLogger:
                 tx_hash=None,
                 on_chain=False,
                 demo_mode=True,
+                pnl_usdc=result.pnl_usdc,
+                pnl_pct=pnl_pct,
+                trade_size_usdc=trade_size,
             )
             self._log.append(entry)
             logger.info(
@@ -253,11 +323,15 @@ class ReputationLogger:
                 tx_hash=tx_hash,
                 on_chain=True,
                 demo_mode=False,
+                pnl_usdc=result.pnl_usdc,
+                pnl_pct=pnl_pct,
+                trade_size_usdc=trade_size,
             )
             self._log.append(entry)
             logger.success(
                 f"Reputation logged on-chain: "
-                f"tx={tx_hash} agent={self.agent_id} score={score}/1000"
+                f"tx={tx_hash} agent={self.agent_id} score={score}/1000 "
+                f"pnl={result.pnl_usdc:+.4f}"
             )
             return entry
 
@@ -275,6 +349,9 @@ class ReputationLogger:
                 tx_hash=None,
                 on_chain=False,
                 demo_mode=False,
+                pnl_usdc=result.pnl_usdc,
+                pnl_pct=pnl_pct,
+                trade_size_usdc=trade_size,
             )
             self._log.append(entry)
             return entry
@@ -317,3 +394,43 @@ class ReputationLogger:
     def get_log(self) -> list[dict]:
         """Return all reputation entries as dicts."""
         return [e.to_dict() for e in self._log]
+
+    def get_pnl_summary(self) -> dict:
+        """
+        Return a summary of P&L evidence from all logged trades.
+
+        This is the objective outcome record required by ERC-8004 spec —
+        reputation must be backed by verifiable performance data.
+        """
+        if not self._log:
+            return {
+                "total_trades": 0,
+                "total_pnl_usdc": 0.0,
+                "avg_pnl_pct": 0.0,
+                "total_volume_usdc": 0.0,
+                "profitable_trades": 0,
+                "losing_trades": 0,
+                "break_even_trades": 0,
+                "best_trade_pnl": 0.0,
+                "worst_trade_pnl": 0.0,
+            }
+
+        pnls = [e.pnl_usdc for e in self._log]
+        pnl_pcts = [e.pnl_pct for e in self._log]
+        total_volume = sum(e.trade_size_usdc for e in self._log)
+
+        profitable = sum(1 for p in pnls if p > 0)
+        losing = sum(1 for p in pnls if p < 0)
+        break_even = sum(1 for p in pnls if p == 0.0)
+
+        return {
+            "total_trades": len(self._log),
+            "total_pnl_usdc": round(sum(pnls), 6),
+            "avg_pnl_pct": round(sum(pnl_pcts) / len(pnl_pcts), 6),
+            "total_volume_usdc": round(total_volume, 4),
+            "profitable_trades": profitable,
+            "losing_trades": losing,
+            "break_even_trades": break_even,
+            "best_trade_pnl": round(max(pnls), 6),
+            "worst_trade_pnl": round(min(pnls), 6),
+        }
