@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import ReputationCard from "./ReputationCard";
 import TradeHistory from "./TradeHistory";
 import AgentIdentity from "./AgentIdentity";
+import PnLChart from "./PnLChart";
+import StrategyStatus from "./StrategyStatus";
 
 interface AgentStats {
   agentId: number;
@@ -68,6 +70,12 @@ export default function AgentDashboard() {
           value={stats.pendingValidations.toString()}
         />
       </div>
+
+      {/* P&L Chart */}
+      <PnLChart />
+
+      {/* Strategy Status */}
+      <StrategyStatus />
 
       {/* Reputation */}
       <ReputationCard

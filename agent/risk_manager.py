@@ -22,6 +22,8 @@ from typing import Optional
 
 from loguru import logger
 
+from credora_client import CredoraClient, CredoraRating, CredoraRatingTier  # noqa: E402
+
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -83,6 +85,8 @@ class RiskManager:
         max_daily_drawdown_pct: float = 0.05,
         max_leverage: float = 3.0,
         min_portfolio_value: float = 10.0,
+        credora_client: Optional[CredoraClient] = None,
+        credora_min_grade: Optional[CredoraRatingTier] = None,
     ) -> None:
         if config is not None:
             self.config = config
@@ -103,10 +107,16 @@ class RiskManager:
         self._trading_halted: bool = False
         self._halt_reason: str = ""
 
+        # Optional Credora integration
+        self._credora: Optional[CredoraClient] = credora_client
+        # Minimum acceptable Credora tier (None = no filter)
+        self._credora_min_grade: Optional[CredoraRatingTier] = credora_min_grade
+
         logger.info(
             f"RiskManager initialized: max_pos={max_position_pct:.0%} "
             f"max_exp={max_exposure_pct:.0%} "
-            f"max_dd={max_daily_drawdown_pct:.0%}"
+            f"max_dd={max_daily_drawdown_pct:.0%} "
+            f"credora={'enabled' if credora_client else 'disabled'}"
         )
 
     # ─── Daily Reset ──────────────────────────────────────────────────────────
@@ -207,6 +217,64 @@ class RiskManager:
             f"price={price:.3f} portfolio=${portfolio_value:.2f}"
         )
         return True, "OK"
+
+    def validate_trade_with_credora(
+        self,
+        side: str,
+        size: float,
+        price: float,
+        portfolio_value: float,
+        protocol: str,
+    ) -> tuple[bool, str, float]:
+        """
+        Validate a trade and apply Credora Kelly multiplier to the size.
+
+        Args:
+            side: "YES" or "NO"
+            size: Proposed trade size in USDC
+            price: Market price (0–1)
+            portfolio_value: Total portfolio value in USDC
+            protocol: Protocol/asset name for Credora rating lookup
+
+        Returns:
+            (allowed: bool, reason: str, adjusted_size: float)
+            adjusted_size = size * credora_kelly_multiplier if allowed, else 0.0
+        """
+        if self._credora is None:
+            ok, reason = self.validate_trade(side, size, price, portfolio_value)
+            return ok, reason, size if ok else 0.0
+
+        rating = self._credora.get_rating(protocol)
+        multiplier = rating.kelly_multiplier
+
+        logger.debug(
+            f"RiskManager: Credora rating for {protocol!r}: "
+            f"{rating.tier.value} (kelly_mult={multiplier:.2f})"
+        )
+
+        # Optional hard floor — reject if below minimum grade
+        if self._credora_min_grade is not None:
+            from credora_client import _TIER_ORDER
+            min_idx = _TIER_ORDER.index(self._credora_min_grade)
+            rating_idx = _TIER_ORDER.index(rating.tier) if rating.tier in _TIER_ORDER else -1
+            if rating_idx < min_idx:
+                return (
+                    False,
+                    f"Protocol {protocol!r} rated {rating.tier.value} is below "
+                    f"minimum {self._credora_min_grade.value}",
+                    0.0,
+                )
+
+        # Apply Kelly multiplier to effective size before standard checks
+        adjusted_size = size * multiplier
+        ok, reason = self.validate_trade(side, adjusted_size, price, portfolio_value)
+        return ok, reason, adjusted_size if ok else 0.0
+
+    def get_credora_rating(self, protocol: str) -> Optional[CredoraRating]:
+        """Fetch Credora rating for a protocol (if Credora client is configured)."""
+        if self._credora is None:
+            return None
+        return self._credora.get_rating(protocol)
 
     # ─── Drawdown Tracking ────────────────────────────────────────────────────
 
