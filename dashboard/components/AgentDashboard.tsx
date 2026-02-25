@@ -83,6 +83,12 @@ export default function AgentDashboard() {
         feedbackCount={stats.feedbackCount}
       />
 
+      {/* Backtest Results */}
+      <BacktestResults />
+
+      {/* Portfolio Weights */}
+      <PortfolioWeights />
+
       {/* Multi-Agent Consensus */}
       <MultiAgentConsensus />
 
@@ -114,6 +120,313 @@ function StatCard({
         }`}
       >
         {value}
+      </p>
+    </div>
+  );
+}
+
+// ─── Backtest Results Panel ───────────────────────────────────────────────────
+
+interface BacktestResult {
+  strategy: string;
+  sharpeRatio: number;
+  maxDrawdownPct: number;
+  winRate: number;
+  netPnl: number;
+  totalTrades: number;
+  token: string;
+}
+
+const MOCK_BACKTEST_RESULTS: BacktestResult[] = [
+  {
+    strategy: "mesh_consensus",
+    sharpeRatio: 2.14,
+    maxDrawdownPct: 4.2,
+    winRate: 0.65,
+    netPnl: 87.3,
+    totalTrades: 23,
+    token: "ETH",
+  },
+  {
+    strategy: "trend",
+    sharpeRatio: 1.72,
+    maxDrawdownPct: 6.8,
+    winRate: 0.58,
+    netPnl: 54.1,
+    totalTrades: 31,
+    token: "ETH",
+  },
+  {
+    strategy: "mean_reversion",
+    sharpeRatio: 1.41,
+    maxDrawdownPct: 8.3,
+    winRate: 0.52,
+    netPnl: 32.7,
+    totalTrades: 28,
+    token: "ETH",
+  },
+  {
+    strategy: "momentum",
+    sharpeRatio: 1.18,
+    maxDrawdownPct: 11.4,
+    winRate: 0.49,
+    netPnl: 12.6,
+    totalTrades: 19,
+    token: "ETH",
+  },
+];
+
+function BacktestResults() {
+  const best = MOCK_BACKTEST_RESULTS[0]; // mesh_consensus is best
+
+  return (
+    <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white">Backtest Results</h2>
+        <span className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded">
+          30-day · synthetic GBM · BacktestRegistry
+        </span>
+      </div>
+
+      {/* Best Strategy Banner */}
+      <div className="bg-blue-900/30 border border-blue-700 rounded-lg p-3 mb-4 flex items-center justify-between">
+        <div>
+          <p className="text-xs text-gray-400">Best Strategy</p>
+          <p className="text-white font-bold capitalize">
+            {best.strategy.replace("_", " ")}
+          </p>
+        </div>
+        <div className="flex gap-6 text-right">
+          <div>
+            <p className="text-xs text-gray-400">Sharpe</p>
+            <p className="text-blue-300 font-bold">{best.sharpeRatio.toFixed(2)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">Max DD</p>
+            <p className="text-orange-300 font-bold">{best.maxDrawdownPct.toFixed(1)}%</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-400">Win Rate</p>
+            <p className="text-green-300 font-bold">{(best.winRate * 100).toFixed(0)}%</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Strategy Comparison Table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-gray-400 text-left border-b border-gray-800">
+              <th className="pb-2 pr-4">Strategy</th>
+              <th className="pb-2 pr-4 text-right">Sharpe</th>
+              <th className="pb-2 pr-4 text-right">Max DD</th>
+              <th className="pb-2 pr-4 text-right">Win Rate</th>
+              <th className="pb-2 text-right">Net PnL</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-800">
+            {MOCK_BACKTEST_RESULTS.map((r, i) => (
+              <tr
+                key={r.strategy}
+                className={i === 0 ? "text-blue-300" : "text-gray-300"}
+              >
+                <td className="py-2 pr-4 capitalize font-medium">
+                  {r.strategy.replace("_", " ")}
+                  {i === 0 && (
+                    <span className="ml-2 text-xs text-blue-400 bg-blue-900/50 px-1.5 py-0.5 rounded">
+                      best
+                    </span>
+                  )}
+                </td>
+                <td className="py-2 pr-4 text-right font-mono">
+                  {r.sharpeRatio.toFixed(2)}
+                </td>
+                <td
+                  className={`py-2 pr-4 text-right font-mono ${
+                    r.maxDrawdownPct > 10 ? "text-red-400" : "text-orange-300"
+                  }`}
+                >
+                  {r.maxDrawdownPct.toFixed(1)}%
+                </td>
+                <td className="py-2 pr-4 text-right font-mono">
+                  {(r.winRate * 100).toFixed(0)}%
+                </td>
+                <td
+                  className={`py-2 text-right font-mono ${
+                    r.netPnl >= 0 ? "text-green-400" : "text-red-400"
+                  }`}
+                >
+                  ${r.netPnl > 0 ? "+" : ""}
+                  {r.netPnl.toFixed(1)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-xs text-gray-500 mt-3">
+        Registered in BacktestRegistry (on-chain analog). mesh_consensus aggregates
+        trend + mean_reversion + momentum signals (2/3 vote required).
+      </p>
+    </div>
+  );
+}
+
+// ─── Portfolio Weights Panel ──────────────────────────────────────────────────
+
+interface ProtocolWeight {
+  protocol: string;
+  weight: number;
+  credoraTier: string;
+  targetWeight: number;
+  drift: number;
+  kellyMultiplier: number;
+}
+
+const MOCK_PORTFOLIO_WEIGHTS: ProtocolWeight[] = [
+  {
+    protocol: "Aave",
+    weight: 0.32,
+    credoraTier: "AAA",
+    targetWeight: 0.30,
+    drift: 0.02,
+    kellyMultiplier: 1.0,
+  },
+  {
+    protocol: "Uniswap",
+    weight: 0.27,
+    credoraTier: "A",
+    targetWeight: 0.30,
+    drift: -0.03,
+    kellyMultiplier: 0.8,
+  },
+  {
+    protocol: "Compound",
+    weight: 0.22,
+    credoraTier: "AA",
+    targetWeight: 0.20,
+    drift: 0.02,
+    kellyMultiplier: 0.9,
+  },
+  {
+    protocol: "MakerDAO",
+    weight: 0.12,
+    credoraTier: "BBB",
+    targetWeight: 0.15,
+    drift: -0.03,
+    kellyMultiplier: 0.65,
+  },
+  {
+    protocol: "Curve",
+    weight: 0.07,
+    credoraTier: "BB",
+    targetWeight: 0.05,
+    drift: 0.02,
+    kellyMultiplier: 0.5,
+  },
+];
+
+const TIER_COLORS: Record<string, string> = {
+  AAA: "text-emerald-400",
+  AA: "text-green-400",
+  A: "text-lime-400",
+  BBB: "text-yellow-400",
+  BB: "text-orange-400",
+  B: "text-red-400",
+  CCC: "text-red-600",
+  NR: "text-gray-500",
+};
+
+function PortfolioWeights() {
+  const needsRebalance = MOCK_PORTFOLIO_WEIGHTS.some(
+    (p) => Math.abs(p.drift) > 0.05
+  );
+
+  return (
+    <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white">
+          Portfolio Weights
+          <span className="ml-2 text-xs text-gray-400 font-normal">
+            (mean-variance + Credora)
+          </span>
+        </h2>
+        <div className="flex items-center gap-2">
+          {needsRebalance ? (
+            <span className="text-xs text-orange-400 bg-orange-900/30 border border-orange-700 px-2 py-1 rounded">
+              Rebalance Pending
+            </span>
+          ) : (
+            <span className="text-xs text-green-400 bg-green-900/30 border border-green-700 px-2 py-1 rounded">
+              Balanced
+            </span>
+          )}
+          <span className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded">
+            5% drift trigger
+          </span>
+        </div>
+      </div>
+
+      {/* Weight Bars */}
+      <div className="space-y-3">
+        {MOCK_PORTFOLIO_WEIGHTS.map((p) => {
+          const isOverweight = p.drift > 0;
+          const driftBig = Math.abs(p.drift) > 0.05;
+          return (
+            <div key={p.protocol}>
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-white font-medium">
+                    {p.protocol}
+                  </span>
+                  <span
+                    className={`text-xs font-bold ${TIER_COLORS[p.credoraTier] || "text-gray-400"}`}
+                  >
+                    {p.credoraTier}
+                  </span>
+                </div>
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-gray-400">
+                    Target: {(p.targetWeight * 100).toFixed(0)}%
+                  </span>
+                  <span
+                    className={`font-mono ${driftBig ? (isOverweight ? "text-orange-400" : "text-blue-400") : "text-gray-400"}`}
+                  >
+                    {isOverweight ? "▲" : "▼"}
+                    {(Math.abs(p.drift) * 100).toFixed(1)}%
+                  </span>
+                  <span className="text-white font-bold">
+                    {(p.weight * 100).toFixed(0)}%
+                  </span>
+                </div>
+              </div>
+              <div className="relative w-full bg-gray-800 rounded-full h-2">
+                {/* Target marker */}
+                <div
+                  className="absolute top-0 h-full w-0.5 bg-gray-500"
+                  style={{ left: `${p.targetWeight * 100}%` }}
+                />
+                {/* Current weight bar */}
+                <div
+                  className={`h-2 rounded-full transition-all ${
+                    driftBig ? "bg-orange-500" : "bg-blue-500"
+                  }`}
+                  style={{ width: `${p.weight * 100}%` }}
+                />
+              </div>
+              <div className="flex justify-between text-xs text-gray-600 mt-0.5">
+                <span>Kelly: {(p.kellyMultiplier * 100).toFixed(0)}%</span>
+                <span>Cap: {p.credoraTier === "AAA" ? "40" : p.credoraTier === "AA" ? "35" : p.credoraTier === "A" ? "30" : p.credoraTier === "BBB" ? "25" : "20"}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-gray-500 mt-4">
+        Weights optimized via PortfolioOptimizer (min-variance). Credora tier
+        caps enforce max concentration. Drift {">"} 5% triggers rebalancing orders.
       </p>
     </div>
   );

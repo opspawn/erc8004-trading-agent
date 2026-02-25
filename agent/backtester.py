@@ -148,10 +148,39 @@ def momentum_signal(bars: List[PriceBar], idx: int, lookback: int = 5) -> Option
     return None
 
 
+def mesh_consensus_signal(bars: List[PriceBar], idx: int, lookback: int = 10) -> Optional[str]:
+    """
+    Mesh consensus signal — aggregates trend, mean_reversion, and momentum signals.
+
+    Inspired by ERC-8004 mesh coordination: multiple signal sources vote,
+    consensus above a threshold triggers a trade.
+
+    Returns "BUY" if 2+ signals agree on BUY, "SELL" if 2+ agree on SELL,
+    None if signals are split or insufficient history.
+    """
+    if idx < max(lookback, 20):   # need enough bars for all sub-signals
+        return None
+
+    trend = trend_signal(bars, idx, lookback=lookback)
+    mr = mean_reversion_signal(bars, idx, lookback=lookback)
+    mom = momentum_signal(bars, idx, lookback=min(lookback, 5))
+
+    votes = [trend, mr, mom]
+    buys = sum(1 for v in votes if v == "BUY")
+    sells = sum(1 for v in votes if v == "SELL")
+
+    if buys >= 2:
+        return "BUY"
+    elif sells >= 2:
+        return "SELL"
+    return None
+
+
 STRATEGY_MAP: Dict[str, Callable] = {
     "trend": trend_signal,
     "mean_reversion": mean_reversion_signal,
     "momentum": momentum_signal,
+    "mesh_consensus": mesh_consensus_signal,
 }
 
 
@@ -441,3 +470,266 @@ class Backtester:
             capital += t.pnl_usdc
             equity.append(capital)
         return equity
+
+
+# ─── Backtest Registry ────────────────────────────────────────────────────────
+
+@dataclass
+class BacktestRecord:
+    """Immutable record of a completed backtest run (on-chain analog)."""
+    record_id: str
+    strategy: str
+    token: str
+    days: int
+    initial_capital: float
+    final_capital: float
+    sharpe_ratio: float
+    max_drawdown_pct: float
+    win_rate: float
+    total_trades: int
+    net_pnl: float
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict:
+        return {
+            "record_id": self.record_id,
+            "strategy": self.strategy,
+            "token": self.token,
+            "days": self.days,
+            "initial_capital": round(self.initial_capital, 4),
+            "final_capital": round(self.final_capital, 4),
+            "sharpe_ratio": round(self.sharpe_ratio, 4),
+            "max_drawdown_pct": round(self.max_drawdown_pct, 4),
+            "win_rate": round(self.win_rate, 4),
+            "total_trades": self.total_trades,
+            "net_pnl": round(self.net_pnl, 4),
+            "timestamp": self.timestamp,
+        }
+
+
+class BacktestRegistry:
+    """
+    In-memory registry for backtest results — on-chain analog (mock).
+
+    Mimics the ERC-8004 BacktestRegistry smart contract interface:
+      - store(record) → records result with unique ID
+      - get(record_id) → retrieve by ID
+      - query(strategy=..., token=...) → filter records
+      - best(metric="sharpe_ratio") → find top performer
+
+    In a production deployment this would write to a smart contract on Hedera/EVM.
+    """
+
+    def __init__(self) -> None:
+        self._records: Dict[str, BacktestRecord] = {}
+        self._counter: int = 0
+        logger.info("BacktestRegistry initialized (mock on-chain registry)")
+
+    def store(
+        self,
+        backtester: "Backtester",
+        trades: List[BacktestTrade],
+        stats: BacktestStats,
+        strategy: str,
+        token: str,
+        days: int,
+    ) -> BacktestRecord:
+        """Store a backtest result and return the registry record."""
+        self._counter += 1
+        record_id = f"BT-{self._counter:06d}"
+        record = BacktestRecord(
+            record_id=record_id,
+            strategy=strategy,
+            token=token,
+            days=days,
+            initial_capital=backtester.initial_capital,
+            final_capital=stats.final_capital,
+            sharpe_ratio=stats.sharpe_ratio,
+            max_drawdown_pct=stats.max_drawdown_pct,
+            win_rate=stats.win_rate,
+            total_trades=stats.total_trades,
+            net_pnl=stats.net_pnl,
+        )
+        self._records[record_id] = record
+        logger.info(
+            f"BacktestRegistry: stored {record_id} "
+            f"strategy={strategy} sharpe={stats.sharpe_ratio:.3f}"
+        )
+        return record
+
+    def get(self, record_id: str) -> Optional[BacktestRecord]:
+        """Retrieve a backtest record by ID."""
+        return self._records.get(record_id)
+
+    def query(
+        self,
+        strategy: Optional[str] = None,
+        token: Optional[str] = None,
+    ) -> List[BacktestRecord]:
+        """Filter registry records by strategy and/or token."""
+        results = list(self._records.values())
+        if strategy:
+            results = [r for r in results if r.strategy == strategy]
+        if token:
+            results = [r for r in results if r.token == token]
+        return results
+
+    def best(
+        self,
+        metric: str = "sharpe_ratio",
+        strategy: Optional[str] = None,
+    ) -> Optional[BacktestRecord]:
+        """Return the record with the highest value for the given metric."""
+        records = self.query(strategy=strategy)
+        if not records:
+            return None
+        valid_metrics = {
+            "sharpe_ratio", "win_rate", "net_pnl",
+            "final_capital", "total_trades",
+        }
+        if metric not in valid_metrics:
+            raise ValueError(f"Unknown metric {metric!r}. Choose: {valid_metrics}")
+        return max(records, key=lambda r: getattr(r, metric))
+
+    def worst(
+        self,
+        metric: str = "max_drawdown_pct",
+        strategy: Optional[str] = None,
+    ) -> Optional[BacktestRecord]:
+        """Return the record with the highest drawdown (or worst value)."""
+        records = self.query(strategy=strategy)
+        if not records:
+            return None
+        return max(records, key=lambda r: getattr(r, metric))
+
+    def all_records(self) -> List[BacktestRecord]:
+        """Return all stored records sorted by timestamp descending."""
+        return sorted(self._records.values(), key=lambda r: r.timestamp, reverse=True)
+
+    def count(self) -> int:
+        """Total number of stored records."""
+        return len(self._records)
+
+    def clear(self) -> None:
+        """Clear all records (used for testing)."""
+        self._records.clear()
+        self._counter = 0
+        logger.info("BacktestRegistry: cleared all records")
+
+    def summary(self) -> Dict[str, float]:
+        """Return aggregate statistics across all stored records."""
+        records = list(self._records.values())
+        if not records:
+            return {"count": 0}
+        sharpes = [r.sharpe_ratio for r in records]
+        drawdowns = [r.max_drawdown_pct for r in records]
+        win_rates = [r.win_rate for r in records]
+        return {
+            "count": len(records),
+            "avg_sharpe": sum(sharpes) / len(sharpes),
+            "max_sharpe": max(sharpes),
+            "avg_drawdown": sum(drawdowns) / len(drawdowns),
+            "max_drawdown": max(drawdowns),
+            "avg_win_rate": sum(win_rates) / len(win_rates),
+        }
+
+
+# ─── CLI Entry Point ──────────────────────────────────────────────────────────
+
+def _cli_main() -> None:
+    """
+    Command-line interface for running backtests.
+
+    Usage:
+        python -m agent.backtester --days 30 --strategy mesh_consensus
+        python -m agent.backtester --days 60 --strategy trend --token BTC --capital 5000
+    """
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="ERC-8004 Trading Agent — Backtester CLI",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--days", type=int, default=30, help="Backtest window in days")
+    parser.add_argument(
+        "--strategy",
+        default="mesh_consensus",
+        choices=list(STRATEGY_MAP.keys()),
+        help="Trading strategy to backtest",
+    )
+    parser.add_argument("--token", default="ETH", help="Token symbol")
+    parser.add_argument("--capital", type=float, default=1000.0, help="Initial capital (USDC)")
+    parser.add_argument("--position-size", type=float, default=0.10, help="Position size fraction")
+    parser.add_argument("--volatility", type=float, default=0.02, help="Simulated volatility")
+    parser.add_argument("--drift", type=float, default=0.0005, help="Simulated price drift")
+    parser.add_argument(
+        "--mode",
+        default="gbm",
+        choices=["gbm", "trending", "mean_reverting"],
+        help="Price simulation mode",
+    )
+    parser.add_argument("--register", action="store_true", help="Store result in BacktestRegistry")
+    parser.add_argument("--compare", action="store_true", help="Compare all strategies")
+
+    args = parser.parse_args()
+
+    bt = Backtester(
+        initial_capital=args.capital,
+        position_size_pct=args.position_size,
+    )
+
+    # Generate price data
+    if args.mode == "trending":
+        bars = bt.generate_trending_prices(days=args.days)
+    elif args.mode == "mean_reverting":
+        bars = bt.generate_mean_reverting_prices(days=args.days)
+    else:
+        bars = bt.generate_synthetic_prices(
+            token=args.token,
+            days=args.days,
+            volatility=args.volatility,
+            drift=args.drift,
+        )
+
+    if args.compare:
+        # Compare all strategies
+        print(f"\n{'='*60}")
+        print(f"Strategy Comparison | {args.token} | {args.days} days")
+        print(f"{'='*60}")
+        results = bt.compare_strategies(bars, token=args.token)
+        for name, stats in results.items():
+            print(
+                f"{name:20s}  sharpe={stats.sharpe_ratio:6.3f}  "
+                f"dd={stats.max_drawdown_pct:5.1f}%  "
+                f"wr={stats.win_rate:4.1%}  "
+                f"pnl=${stats.net_pnl:+8.2f}"
+            )
+        print()
+        return
+
+    # Single strategy backtest
+    trades = bt.run(bars, strategy=args.strategy, token=args.token)
+    stats = bt.compute_stats(trades)
+
+    print(f"\n{'='*60}")
+    print(f"Backtest Results | strategy={args.strategy} | {args.token} | {args.days}d")
+    print(f"{'='*60}")
+    print(f"  Initial capital  : ${stats.final_capital - stats.net_pnl:,.2f}")
+    print(f"  Final capital    : ${stats.final_capital:,.2f}")
+    print(f"  Net P&L          : ${stats.net_pnl:+,.2f}")
+    print(f"  Total return     : {stats.total_return_pct:+.2f}%")
+    print(f"  Sharpe ratio     : {stats.sharpe_ratio:.4f}")
+    print(f"  Max drawdown     : {stats.max_drawdown_pct:.2f}%")
+    print(f"  Win rate         : {stats.win_rate:.1%}")
+    print(f"  Total trades     : {stats.total_trades}")
+    print(f"  Profit factor    : {stats.profit_factor:.2f}")
+    print()
+
+    if args.register:
+        registry = BacktestRegistry()
+        record = registry.store(bt, trades, stats, args.strategy, args.token, args.days)
+        print(f"Stored in BacktestRegistry as {record.record_id}")
+
+
+if __name__ == "__main__":
+    _cli_main()

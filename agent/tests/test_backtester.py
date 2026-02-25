@@ -354,7 +354,7 @@ class TestComputeStats:
 
     def test_compare_strategies(self, bt, synth_bars):
         results = bt.compare_strategies(synth_bars)
-        assert set(results.keys()) == {"trend", "mean_reversion", "momentum"}
+        assert {"trend", "mean_reversion", "momentum"}.issubset(set(results.keys()))
         for s in results.values():
             assert isinstance(s, BacktestStats)
 

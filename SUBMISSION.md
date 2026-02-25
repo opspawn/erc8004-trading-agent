@@ -105,18 +105,48 @@ reject trades on any protocol rated below investment grade.
 | Oracle | RedStone (via OracleClient), Surge routing |
 | Dashboard | Next.js 15, React, Recharts, Tailwind CSS |
 | Deployment | Vercel (frontend), Sepolia testnet (contracts) |
-| Testing | pytest (1,554+ tests), Hardhat/Mocha (113 Solidity tests) |
+| Testing | pytest (1,700+ tests), Hardhat/Mocha (113 Solidity tests) |
 | Standards | ERC-8004 (agent identity, reputation, validation) |
 
 ---
 
 ## Test Coverage
 
-- **Python**: 1,554+ tests across 29 test files
+- **Python**: 1,700+ tests across 31 test files
 - **Solidity**: 113 tests (AgentRegistry, ReputationRegistry, TradeValidator, RiskRouter)
 - **Integration**: End-to-end tests simulating full trade lifecycle with Credora,
   oracle validation, on-chain reputation updates, multi-agent mesh consensus,
   and sentiment signal modulation
+
+## S13: Backtesting Engine + Portfolio Optimizer (Latest)
+
+Sprint 13 adds two high-value modules for quantitative competition scoring:
+
+### Backtesting Engine (`agent/backtester.py` — extended)
+Historical simulation with ERC-8004 reputation-aware strategies:
+- **Sharpe ratio, max drawdown, win rate, P&L** computed per strategy
+- **`mesh_consensus` strategy**: aggregates trend + mean_reversion + momentum signals,
+  requires 2/3 signal consensus — directly mirrors the ERC-8004 multi-agent voting model
+- **`BacktestRegistry`**: on-chain analog (mock) that stores backtest results with
+  unique IDs, supports query by strategy/token, and retrieves best/worst performers
+- **CLI**: `python -m agent.backtester --days 30 --strategy mesh_consensus --compare`
+
+### Portfolio Optimizer (`agent/portfolio_optimizer.py`)
+Mean-variance optimization with ERC-8004 reputation weighting:
+- **Credora-weighted optimization**: Kelly multiplier scales asset weights by credit tier
+  (AAA→1.0x, NR→0.10x) — protocols with higher reputation receive higher allocation
+- **Concentration caps by tier**: AAA max 40%, NR max 5% — directly tied to Credora ratings
+- **5% drift trigger**: automatic rebalancing detection when any position drifts >5%
+- **Integration**: `validate_rebalance_with_risk_manager()` passes orders through
+  `RiskManager.validate_trade_with_sentiment()` — full risk pipeline for rebalances
+- **Dashboard**: BacktestResults panel (Sharpe/drawdown table) + PortfolioWeights chart
+
+### Dashboard Updates (`dashboard/components/AgentDashboard.tsx`)
+- **BacktestResults panel**: strategy comparison table with Sharpe, max drawdown, win rate
+- **PortfolioWeights panel**: visual weight bars with Credora tier badges,
+  drift indicators, and rebalance status
+
+---
 
 ## S12: Multi-Agent Mesh + Sentiment Signals
 
@@ -159,7 +189,7 @@ erc8004-trading-agent/
 │   ├── oracle_client.py      # RedStone oracle client
 │   ├── reputation.py         # On-chain reputation logger
 │   ├── validator.py          # Trade validation
-│   └── tests/                # 1,554+ pytest tests
+│   └── tests/                # 1,700+ pytest tests
 ├── contracts/                # Solidity ERC-8004 implementation
 │   ├── AgentRegistry.sol
 │   ├── ReputationRegistry.sol
