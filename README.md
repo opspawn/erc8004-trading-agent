@@ -80,6 +80,96 @@ npm install
 npm run dev
 ```
 
+## 5-Minute Demo
+
+See the full agent pipeline execute end-to-end in under a minute, with no external
+dependencies. The dry-run fetches simulated market prices, generates trade signals,
+validates them through the risk engine, simulates order execution, and writes every
+decision to a local SQLite ledger with a deterministic `tx_hash` proof placeholder.
+
+### Run the demo
+
+```bash
+cd agent
+python3 demo_cli.py --ticks 20 --symbol BTC/USD --seed 42
+```
+
+**Expected output:**
+```
+========================================================================
+  ERC-8004 Trading Agent — Pipeline Dry-Run
+  Agent:   demo-agent-...
+  Symbol:  BTC/USD
+  Ticks:   20
+  Capital: $10,000.00
+========================================================================
+
+TICK        PRICE SIGNAL RISK          SIZE     NOTIONAL TX_HASH
+------------------------------------------------------------------------
+1        65130.09 BUY    OK          0.0154      1000.00 0x566221c4b6ae85fa44...
+2        65167.79 BUY    OK          0.0138       900.00 0x225a79958cfe35ee90...
+3        65119.62 SELL   OK          0.0124       810.00 0xd7f28d8a8a4ff93ebc...
+...
+------------------------------------------------------------------------
+
+Summary
+-------
+  Ticks processed  : 20
+  Trades executed  : 17
+  Trades rejected  : 3
+  Total notional   : $13,150.60
+  BUY / SELL       : 9 / 8
+  Price start→end  : $65000.00 → $65074.63
+  Price return     : +0.11%
+  Final capital    : $8,304.70
+  Elapsed          : 1.8ms
+
+  Ledger written to: :memory:
+========================================================================
+```
+
+### Pipeline steps (visible in the trace)
+
+| Step | Module | What happens |
+|------|--------|--------------|
+| **Market fetch** | `demo_cli._gbm_prices` | GBM price ticks for the chosen symbol |
+| **Signal** | `demo_cli._compute_signal` | Momentum signal: BUY / SELL / HOLD |
+| **Risk check** | `demo_cli._risk_check` | Max position size + drawdown validation |
+| **Order sim** | `demo_cli.DemoPipeline` | Paper trade: capital updated, position tracked |
+| **Ledger write** | `trade_ledger.TradeLedger` | SQLite row: agent_id, market, side, size, price, tx_hash |
+
+### Inspect the trade ledger
+
+```bash
+# Persist to file and inspect
+python3 demo_cli.py --ticks 50 --db /tmp/trades.db
+
+# Query via Python
+python3 - <<'EOF'
+from trade_ledger import TradeLedger
+tl = TradeLedger("/tmp/trades.db")
+for e in tl.get_entries(side="BUY"):
+    print(e.tx_hash, e.market, e.price, e.notional)
+print(tl.get_summary().to_dict())
+tl.close()
+EOF
+```
+
+### Machine-readable JSON output
+
+```bash
+python3 demo_cli.py --ticks 10 --json | python3 -m json.tool | head -30
+```
+
+### Run with different symbols or capital
+
+```bash
+python3 demo_cli.py --symbol ETH/USD --ticks 30 --capital 50000
+python3 demo_cli.py --symbol SOL/USD --ticks 100 --seed 7
+```
+
+---
+
 ## ERC-8004 Standard
 
 ERC-8004 defines a standard for autonomous AI agent identity on Ethereum:
