@@ -60,7 +60,7 @@
 
 | Metric | Value |
 |--------|-------|
-| **Python tests** | **2,350 passing** (37 test files) |
+| **Python tests** | **2,596 passing** (39 test files) |
 | **Solidity tests** | 113 (4 contracts) |
 | **Trading strategies** | 5 named + 1 ensemble meta-strategy |
 | **Agent identities** | 3 (Conservative / Balanced / Aggressive) |
@@ -200,6 +200,36 @@ Five named trading strategies plus an ensemble meta-strategy:
 - **Tests**: 125 unit + integration tests covering buy/sell/hold logic, edge cases, backtest stats
 
 **Sprint 16 total new tests: +223** (2,350 total)
+
+---
+
+## S17: Integration Pipeline + End-to-End Orchestration
+
+Sprint 17 wires all modules into a single runnable pipeline and fixes integration issues:
+
+### Integration Orchestrator (`agent/pipeline.py`)
+- Full tick loop: `market_feed → strategy_engine → risk_manager → paper_trader`
+- `Pipeline.start()` / `stop()` / `status()` lifecycle with graceful shutdown
+- Async-safe: `asyncio.Event` + `asyncio.Lock` for thread-safe state management
+- Fixed event loop starvation at `tick_interval=0.0` (adds `await asyncio.sleep(0)` to yield)
+- Confidence threshold changed to strict `> 0.55` for consistent test behavior
+- `run_n_ticks(n)` for deterministic test execution; `reset()` for full state clear
+
+### Pipeline API (`agent/pipeline_api.py`)
+- `POST /pipeline/start` — start pipeline, 409 if already running
+- `POST /pipeline/stop` — stop pipeline, 409 if not running
+- `GET /pipeline/status` — state, ticks, trades, P&L, symbols
+- `GET /pipeline/trades?limit=N` — last N trades (default 50, max 500)
+- `GET /pipeline/health` — liveness probe
+
+### Test Fixes (Integration)
+- Fixed `fresh_pipeline` fixture to be async, properly awaiting `pipeline.stop()`
+- Fixed `Backtester(prices)` API mismatch → `Backtester()` + `compare_strategies(bars)`
+- Fixed `run_all()` calls → `compare_strategies()` returning `Dict[str, BacktestStats]`
+- Fixed `r.sharpe` → `r.sharpe_ratio` (correct attribute name)
+- Fixed `get_trades()` default limit=50 in 100-trade assertion
+
+**Sprint 17 total new tests: +246** (2,596 total)
 
 ---
 
