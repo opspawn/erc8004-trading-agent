@@ -105,20 +105,58 @@ reject trades on any protocol rated below investment grade.
 | Oracle | RedStone (via OracleClient), Surge routing |
 | Dashboard | Next.js 15, React, Recharts, Tailwind CSS |
 | Deployment | Vercel (frontend), Sepolia testnet (contracts) |
-| Testing | pytest (1,903+ tests), Hardhat/Mocha (113 Solidity tests) |
+| Testing | pytest (2,127 tests), Hardhat/Mocha (113 Solidity tests) |
 | Standards | ERC-8004 (agent identity, reputation, validation) |
 
 ---
 
 ## Test Coverage
 
-- **Python**: 1,903+ tests across 34 test files
+- **Python**: 2,127 tests across 37 test files
 - **Solidity**: 113 tests (AgentRegistry, ReputationRegistry, TradeValidator, RiskRouter)
 - **Integration**: End-to-end tests simulating full trade lifecycle with Credora,
   oracle validation, on-chain reputation updates, multi-agent mesh consensus,
   and sentiment signal modulation
 
-## S14: WebSocket Signal Server + Health API + Paper Trader (Latest)
+## S15: E2E Demo Runner + Risk Dashboard API + Stress Tester (Latest)
+
+Sprint 15 adds three judge-ready demo and robustness modules:
+
+### End-to-End Demo Runner (`agent/demo_runner.py`)
+Orchestrates a complete multi-agent trading demonstration in one call:
+- **3 agent instances**: Conservative / Balanced / Aggressive with distinct risk profiles
+- **50 sequential GBM ticks**: realistic price walk with per-tick mesh consensus → paper trade → reputation update
+- **Tracking**: P&L per agent, reputation score evolution, risk violations per tick
+- **Output**: JSON report + `report.summary()` human-readable output
+- **Edge cases**: zero-liquidity (flat prices) and extreme-volatility scenarios
+- **Tests**: 50 unit tests covering full E2E flow, edge cases, voting, consensus, reputation
+
+### Risk Dashboard API (`agent/risk_dashboard.py`)
+HTTP server (stdlib only, port 8082) exposing live risk data:
+- **GET /risk** → VaR-95, max drawdown, Kelly fraction, capital per agent
+- **GET /performance** → Sharpe ratio, Sortino ratio, win rate per agent
+- **GET /signals** → Last 10 trade signals with timestamps
+- **GET /consensus** → Last 20 mesh coordinator decisions
+- **POST /reset** → Reset paper trader state for demo replay
+- Thread-safe in-memory state, CORS headers, no external deps
+- **Tests**: 74 unit tests covering all endpoints, payloads, error cases, state management
+
+### Stress Testing Module (`agent/stress_tester.py`)
+Adversarial scenario simulator with 7 named scenarios:
+- **Flash crash**: -40% in 5 ticks → agents trigger protective SELL/VETO
+- **Liquidity crisis**: all Surge routes return zero → graceful HOLD
+- **Oracle failure**: RedStone raises ConnectionError → stale-cache fallback
+- **Consensus deadlock**: 3-way tie → reputation tie-breaking resolves to correct action
+- **High volatility**: 50% spike triggers VETO mechanism → system-level HOLD
+- **Reputation collapse**: near-zero reputations → system still functions
+- **Zero capital**: no funds → system prevents trading
+- **Tests**: 100 unit tests covering all scenarios, pass/fail, tie-breaking logic
+
+**Sprint 15 total new tests: 224** (2,127 total, +225 from 1,902)
+
+---
+
+## S14: WebSocket Signal Server + Health API + Paper Trader
 
 Sprint 14 adds three live-demo-ready features that make the agent compelling
 for judge evaluation with real-time data and simulation results:
