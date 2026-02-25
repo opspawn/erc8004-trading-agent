@@ -327,6 +327,267 @@ class CredoraClient:
         return len(self._cache)
 
 
+# ─── Agent Credit History Tracking ───────────────────────────────────────────
+
+from dataclasses import dataclass as _dc, field as _field
+
+
+@_dc
+class TradeRecord:
+    """Single trade entry in an agent's credit history."""
+    market_id: str
+    protocol: str
+    size_usdc: float
+    outcome: str                    # "WIN" | "LOSS" | "PENDING"
+    pnl_usdc: float
+    credora_tier: CredoraRatingTier
+    timestamp: float = _field(default_factory=time.time)
+
+    @property
+    def is_win(self) -> bool:
+        return self.outcome == "WIN"
+
+    @property
+    def is_loss(self) -> bool:
+        return self.outcome == "LOSS"
+
+
+class AgentCreditHistory:
+    """
+    Tracks an agent's trading history and derives a credit score.
+
+    The credit score (0–100) is computed from:
+      - Win rate (40% weight)
+      - Average PnL per trade (30% weight)
+      - Protocol diversification (15% weight)
+      - Average Credora tier of traded protocols (15% weight)
+
+    The score maps to a CredoraRatingTier for risk-adjusted sizing.
+    """
+
+    # Score thresholds → tier (descending order)
+    _SCORE_TIERS: list[tuple[float, CredoraRatingTier]] = [
+        (93.0, CredoraRatingTier.AAA),
+        (83.0, CredoraRatingTier.AA),
+        (73.0, CredoraRatingTier.A),
+        (60.0, CredoraRatingTier.BBB),
+        (47.0, CredoraRatingTier.BB),
+        (33.0, CredoraRatingTier.B),
+        (20.0, CredoraRatingTier.CCC),
+        (0.0,  CredoraRatingTier.NR),
+    ]
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        self._trades: list[TradeRecord] = []
+        logger.info(f"AgentCreditHistory created for agent {agent_id!r}")
+
+    # ── Recording ──────────────────────────────────────────────────────────
+
+    def record_trade(
+        self,
+        market_id: str,
+        protocol: str,
+        size_usdc: float,
+        outcome: str,
+        pnl_usdc: float,
+        credora_tier: CredoraRatingTier = CredoraRatingTier.NR,
+    ) -> TradeRecord:
+        """Record a completed or pending trade in the agent's credit history."""
+        if outcome not in ("WIN", "LOSS", "PENDING"):
+            raise ValueError(f"Invalid outcome {outcome!r}: must be WIN, LOSS, or PENDING")
+        rec = TradeRecord(
+            market_id=market_id,
+            protocol=protocol,
+            size_usdc=abs(size_usdc),
+            outcome=outcome,
+            pnl_usdc=pnl_usdc,
+            credora_tier=credora_tier,
+        )
+        self._trades.append(rec)
+        logger.debug(
+            f"AgentCreditHistory[{self.agent_id}]: recorded {outcome} "
+            f"{market_id!r} pnl=${pnl_usdc:.2f} tier={credora_tier.value}"
+        )
+        return rec
+
+    def update_outcome(self, market_id: str, outcome: str, pnl_usdc: float) -> bool:
+        """Update the outcome of a pending trade. Returns True if found."""
+        for rec in reversed(self._trades):
+            if rec.market_id == market_id and rec.outcome == "PENDING":
+                rec.outcome = outcome
+                rec.pnl_usdc = pnl_usdc
+                return True
+        return False
+
+    # ── Metrics ────────────────────────────────────────────────────────────
+
+    @property
+    def total_trades(self) -> int:
+        return len(self._trades)
+
+    @property
+    def settled_trades(self) -> list[TradeRecord]:
+        return [t for t in self._trades if t.outcome != "PENDING"]
+
+    @property
+    def win_rate(self) -> float:
+        """Win rate across settled trades (0.0–1.0). Returns 0.5 if no settled trades."""
+        settled = self.settled_trades
+        if not settled:
+            return 0.5
+        wins = sum(1 for t in settled if t.is_win)
+        return wins / len(settled)
+
+    @property
+    def total_pnl(self) -> float:
+        return sum(t.pnl_usdc for t in self._trades)
+
+    @property
+    def average_pnl_per_trade(self) -> float:
+        if not self._trades:
+            return 0.0
+        return self.total_pnl / len(self._trades)
+
+    @property
+    def protocol_diversity(self) -> int:
+        """Number of unique protocols traded."""
+        return len({t.protocol.lower() for t in self._trades})
+
+    @property
+    def average_credora_tier_score(self) -> float:
+        """Average numeric score of Credora tiers traded (0–100)."""
+        if not self._trades:
+            return _TIER_SCORE_MID[CredoraRatingTier.BBB]
+        scores = [_TIER_SCORE_MID[t.credora_tier] for t in self._trades]
+        return sum(scores) / len(scores)
+
+    # ── Credit Score ───────────────────────────────────────────────────────
+
+    def compute_credit_score(self) -> float:
+        """
+        Compute a composite credit score (0–100).
+
+        Components:
+          - Win rate:            0–40 points  (win_rate * 40)
+          - Avg PnL per trade:   0–30 points  (clamped: $-5 → 0, $+5 → 30)
+          - Protocol diversity:  0–15 points  (1 → 5 pts, 5+ → 15 pts)
+          - Avg Credora tier:    0–15 points  (scaled from avg_tier_score / 100 * 15)
+        """
+        # Component 1: win rate
+        win_score = self.win_rate * 40.0
+
+        # Component 2: average PnL (clamped to [-5, +5])
+        avg_pnl = max(-5.0, min(5.0, self.average_pnl_per_trade))
+        pnl_score = ((avg_pnl + 5.0) / 10.0) * 30.0
+
+        # Component 3: protocol diversity (1=5pts, 2=8, 3=11, 4=13, 5+=15)
+        div = min(self.protocol_diversity, 5)
+        div_score = [0, 5, 8, 11, 13, 15][div]
+
+        # Component 4: average Credora tier quality
+        tier_score = (self.average_credora_tier_score / 100.0) * 15.0
+
+        total = win_score + pnl_score + div_score + tier_score
+        return round(min(100.0, max(0.0, total)), 2)
+
+    def get_credit_tier(self) -> CredoraRatingTier:
+        """Return the CredoraRatingTier corresponding to the agent's credit score."""
+        score = self.compute_credit_score()
+        for threshold, tier in self._SCORE_TIERS:
+            if score >= threshold:
+                return tier
+        return CredoraRatingTier.NR
+
+    def get_kelly_multiplier(self) -> float:
+        """Return Kelly multiplier based on agent's own credit history."""
+        return KELLY_MULTIPLIERS[self.get_credit_tier()]
+
+    def as_credora_rating(self) -> CredoraRating:
+        """Return a CredoraRating built from this agent's credit history."""
+        tier = self.get_credit_tier()
+        score = self.compute_credit_score()
+        return CredoraRating(
+            protocol=f"agent:{self.agent_id}",
+            tier=tier,
+            score=score,
+            source="credit_history",
+        )
+
+    def get_summary(self) -> dict:
+        """Return a dict summary of credit history for dashboards/logging."""
+        return {
+            "agent_id": self.agent_id,
+            "total_trades": self.total_trades,
+            "settled_trades": len(self.settled_trades),
+            "win_rate": round(self.win_rate, 4),
+            "total_pnl_usdc": round(self.total_pnl, 4),
+            "average_pnl_per_trade": round(self.average_pnl_per_trade, 4),
+            "protocol_diversity": self.protocol_diversity,
+            "average_credora_tier_score": round(self.average_credora_tier_score, 2),
+            "credit_score": self.compute_credit_score(),
+            "credit_tier": self.get_credit_tier().value,
+            "kelly_multiplier": self.get_kelly_multiplier(),
+        }
+
+    def recent_trades(self, n: int = 10) -> list[TradeRecord]:
+        """Return the n most recent trades."""
+        return self._trades[-n:]
+
+    def trades_by_protocol(self, protocol: str) -> list[TradeRecord]:
+        """Return all trades for a given protocol (case-insensitive)."""
+        return [t for t in self._trades if t.protocol.lower() == protocol.lower()]
+
+    def clear(self) -> None:
+        """Clear all trade history."""
+        self._trades.clear()
+        logger.debug(f"AgentCreditHistory[{self.agent_id}]: history cleared")
+
+
+# ─── Credora API Response Shape (realistic mock) ────────────────────────────
+
+def build_credora_api_response(protocol: str, tier: CredoraRatingTier) -> dict:
+    """
+    Build a realistic Credora API response shape for a given protocol and tier.
+
+    Mirrors the actual Credora API v1 response format with all expected fields.
+    Used for mock testing and documentation of the API contract.
+    """
+    score = _TIER_SCORE_MID[tier]
+    outlook_map = {
+        CredoraRatingTier.AAA: "Stable",
+        CredoraRatingTier.AA:  "Stable",
+        CredoraRatingTier.A:   "Stable",
+        CredoraRatingTier.BBB: "Stable",
+        CredoraRatingTier.BB:  "Negative",
+        CredoraRatingTier.B:   "Negative",
+        CredoraRatingTier.CCC: "Negative Watch",
+        CredoraRatingTier.NR:  "Not Rated",
+    }
+    sub_scores = {
+        CredoraRatingTier.AAA: {"liquidity": 97, "smart_contract": 96, "governance": 95, "market": 94},
+        CredoraRatingTier.AA:  {"liquidity": 90, "smart_contract": 88, "governance": 86, "market": 87},
+        CredoraRatingTier.A:   {"liquidity": 82, "smart_contract": 80, "governance": 78, "market": 79},
+        CredoraRatingTier.BBB: {"liquidity": 71, "smart_contract": 70, "governance": 68, "market": 70},
+        CredoraRatingTier.BB:  {"liquidity": 59, "smart_contract": 56, "governance": 55, "market": 58},
+        CredoraRatingTier.B:   {"liquidity": 46, "smart_contract": 44, "governance": 42, "market": 46},
+        CredoraRatingTier.CCC: {"liquidity": 31, "smart_contract": 29, "governance": 27, "market": 30},
+        CredoraRatingTier.NR:  {"liquidity": 0,  "smart_contract": 0,  "governance": 0,  "market": 0},
+    }
+    return {
+        "protocol": protocol,
+        "rating": tier.value,
+        "score": score,
+        "outlook": outlook_map[tier],
+        "is_investment_grade": tier in INVESTMENT_GRADE,
+        "kelly_multiplier": KELLY_MULTIPLIERS[tier],
+        "sub_scores": sub_scores[tier],
+        "methodology": "Credora v2.1 — Quantitative Credit Assessment",
+        "valid_until": int(time.time()) + 86400,  # 24h validity
+        "data_sources": ["on-chain", "oracle", "governance"],
+    }
+
+
 # ─── Import fix for live API path ────────────────────────────────────────────
 
 import urllib.parse  # noqa: E402  (used inside _try_live_api)
