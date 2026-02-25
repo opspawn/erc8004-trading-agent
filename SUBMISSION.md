@@ -21,13 +21,16 @@ agent holds a verifiable DID (Decentralized Identifier), accumulates an on-chain
 reputation score through each trade, and applies institutional-grade risk
 management using Credora credit ratings before executing any position.
 
-The system integrates three distinct data layers for intelligent decision-making:
+The system integrates five distinct data layers for intelligent decision-making:
 (1) **Credora credit tiers** (AAA–CCC) as Kelly Criterion multipliers to scale
 position sizes by protocol risk, (2) **RedStone/Surge oracle pricing** for
-real-time market data and on-chain settlement, and (3) an **ERC-8004
+real-time market data and on-chain settlement, (3) an **ERC-8004
 ReputationRegistry** that records every trade outcome on-chain and updates the
-agent's trust score. This creates a self-reinforcing loop where the agent's
-trade history directly influences its future position sizing.
+agent's trust score, (4) a **multi-agent mesh coordinator** that runs three
+specialist agents simultaneously with different risk profiles and requires 2/3
+consensus before executing — directly demonstrating ERC-8004's multi-agent
+identity and trust model, and (5) a **sentiment signal layer** that aggregates
+signals from multiple sources to modulate position sizing in real time.
 
 Uniquely, the project implements `AgentCreditHistory` — an on-chain credit score
 system for the agent itself, mirroring how Credora rates DeFi protocols but
@@ -35,6 +38,12 @@ applied to autonomous trading agents. As the agent accumulates wins in higher-ra
 protocols, its own credit score improves, unlocking larger position sizes. This
 aligns incentives for agents to trade responsibly: reckless behavior degrades their
 own credit tier, reducing their capacity to take future positions.
+
+The **multi-agent mesh** is the strongest proof of ERC-8004's value: three agents
+(Conservative, Balanced, Aggressive) each hold their own on-chain ERC-8004 identity
+and reputation score. Their votes are weighted by reputation — the most trusted
+agent has the most influence. No single agent can cause a bad trade; it takes a
+reputation-weighted majority.
 
 ---
 
@@ -96,17 +105,42 @@ reject trades on any protocol rated below investment grade.
 | Oracle | RedStone (via OracleClient), Surge routing |
 | Dashboard | Next.js 15, React, Recharts, Tailwind CSS |
 | Deployment | Vercel (frontend), Sepolia testnet (contracts) |
-| Testing | pytest (1,400+ tests), Hardhat/Mocha (113 Solidity tests) |
+| Testing | pytest (1,554+ tests), Hardhat/Mocha (113 Solidity tests) |
 | Standards | ERC-8004 (agent identity, reputation, validation) |
 
 ---
 
 ## Test Coverage
 
-- **Python**: 1,400+ tests across 27 test files
+- **Python**: 1,554+ tests across 29 test files
 - **Solidity**: 113 tests (AgentRegistry, ReputationRegistry, TradeValidator, RiskRouter)
 - **Integration**: End-to-end tests simulating full trade lifecycle with Credora,
-  oracle validation, and on-chain reputation updates
+  oracle validation, on-chain reputation updates, multi-agent mesh consensus,
+  and sentiment signal modulation
+
+## S12: Multi-Agent Mesh + Sentiment Signals
+
+Sprint 12 added two major modules:
+
+### Multi-Agent Mesh Coordinator (`agent/mesh_coordinator.py`)
+Three specialist agents run simultaneously, each with ERC-8004 on-chain identity:
+- **ConservativeAgent**: min grade A, Kelly 15%, max position 5% — starts at rep 7.0/10
+- **BalancedAgent**: min grade BBB, Kelly 25%, max position 10% — starts at rep 6.5/10
+- **AggressiveAgent**: min grade BB, Kelly 35%, max position 15% — starts at rep 5.5/10
+
+The `MeshCoordinator` requires ≥2/3 agents to vote BUY or SELL before executing.
+Votes are weighted by each agent's current ERC-8004 reputation score, creating
+a trust-proportional consensus. After each trade, all participating agents receive
+reputation updates — wins improve scores, losses reduce them.
+
+### Sentiment Signal Layer (`agent/sentiment_signal.py`)
+Aggregates market sentiment from multiple sources with confidence-weighted averaging:
+- **Positive** (score > 0.3): +10% position size boost
+- **Negative** (score < -0.3): -20% position size reduction
+- **Extreme Negative** (score < -0.7): trade blocked entirely
+
+`RiskManager.validate_trade_with_sentiment()` integrates sentiment into the core
+risk pipeline. Stale signals (>1 hour) are automatically excluded.
 
 ---
 
@@ -115,15 +149,17 @@ reject trades on any protocol rated below investment grade.
 ```
 erc8004-trading-agent/
 ├── agent/                    # Python trading agent
-│   ├── risk_manager.py       # Pre-trade risk validation + Credora integration
+│   ├── risk_manager.py       # Pre-trade risk validation + Credora + sentiment
 │   ├── credora_client.py     # Credora ratings + AgentCreditHistory
+│   ├── mesh_coordinator.py   # Multi-agent mesh (Conservative/Balanced/Aggressive)
+│   ├── sentiment_signal.py   # Sentiment signal aggregator + Kelly modifier
 │   ├── trader.py             # Core trade execution
 │   ├── strategy_runner.py    # Kelly Criterion strategies
 │   ├── surge_router.py       # Surge liquidity routing
 │   ├── oracle_client.py      # RedStone oracle client
 │   ├── reputation.py         # On-chain reputation logger
 │   ├── validator.py          # Trade validation
-│   └── tests/                # 1,400+ pytest tests
+│   └── tests/                # 1,554+ pytest tests
 ├── contracts/                # Solidity ERC-8004 implementation
 │   ├── AgentRegistry.sol
 │   ├── ReputationRegistry.sol

@@ -23,6 +23,7 @@ from typing import Optional
 from loguru import logger
 
 from credora_client import CredoraClient, CredoraRating, CredoraRatingTier  # noqa: E402
+from sentiment_signal import SentimentAggregator  # noqa: E402
 
 
 # ─── Configuration ────────────────────────────────────────────────────────────
@@ -111,6 +112,9 @@ class RiskManager:
         self._credora: Optional[CredoraClient] = credora_client
         # Minimum acceptable Credora tier (None = no filter)
         self._credora_min_grade: Optional[CredoraRatingTier] = credora_min_grade
+
+        # Optional sentiment aggregator
+        self._sentiment: Optional[SentimentAggregator] = None
 
         logger.info(
             f"RiskManager initialized: max_pos={max_position_pct:.0%} "
@@ -217,6 +221,49 @@ class RiskManager:
             f"price={price:.3f} portfolio=${portfolio_value:.2f}"
         )
         return True, "OK"
+
+    def set_sentiment_aggregator(self, aggregator: SentimentAggregator) -> None:
+        """Attach a SentimentAggregator to apply sentiment modifiers to trades."""
+        self._sentiment = aggregator
+        logger.info("RiskManager: sentiment aggregator attached")
+
+    def validate_trade_with_sentiment(
+        self,
+        side: str,
+        size: float,
+        price: float,
+        portfolio_value: float,
+        ticker: str,
+        sentiment_aggregator: Optional[SentimentAggregator] = None,
+    ) -> tuple[bool, str, float]:
+        """
+        Validate a trade and apply sentiment modifier to the position size.
+
+        Args:
+            side:                "YES" or "NO"
+            size:                Proposed trade size in USDC
+            price:               Market price (0–1)
+            portfolio_value:     Total portfolio value in USDC
+            ticker:              Asset ticker for sentiment lookup (e.g. "BTC")
+            sentiment_aggregator: Override the instance-level aggregator
+
+        Returns:
+            (allowed: bool, reason: str, adjusted_size: float)
+        """
+        agg = sentiment_aggregator or self._sentiment
+        if agg is None:
+            ok, reason = self.validate_trade(side, size, price, portfolio_value)
+            return ok, reason, size if ok else 0.0
+
+        # Apply sentiment modifier to size
+        modified_size, sentiment_reason = agg.apply_modifier(size, ticker)
+
+        if modified_size == 0.0:
+            return False, f"Sentiment block: {sentiment_reason}", 0.0
+
+        ok, reason = self.validate_trade(side, modified_size, price, portfolio_value)
+        combined_reason = f"{reason} | sentiment: {sentiment_reason}"
+        return ok, combined_reason, modified_size if ok else 0.0
 
     def validate_trade_with_credora(
         self,

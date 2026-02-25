@@ -83,6 +83,9 @@ export default function AgentDashboard() {
         feedbackCount={stats.feedbackCount}
       />
 
+      {/* Multi-Agent Consensus */}
+      <MultiAgentConsensus />
+
       {/* Trade History */}
       <TradeHistory />
     </div>
@@ -111,6 +114,171 @@ function StatCard({
         }`}
       >
         {value}
+      </p>
+    </div>
+  );
+}
+
+// ─── Multi-Agent Consensus Panel ──────────────────────────────────────────────
+
+interface MeshAgent {
+  id: string;
+  profile: "conservative" | "balanced" | "aggressive";
+  reputationScore: number;
+  minGrade: string;
+  kellyFraction: number;
+  lastVote: "BUY" | "SELL" | "HOLD" | "REJECT" | null;
+}
+
+const MESH_AGENTS: MeshAgent[] = [
+  {
+    id: "conservative_agent",
+    profile: "conservative",
+    reputationScore: 7.0,
+    minGrade: "A",
+    kellyFraction: 0.15,
+    lastVote: "BUY",
+  },
+  {
+    id: "balanced_agent",
+    profile: "balanced",
+    reputationScore: 6.5,
+    minGrade: "BBB",
+    kellyFraction: 0.25,
+    lastVote: "BUY",
+  },
+  {
+    id: "aggressive_agent",
+    profile: "aggressive",
+    reputationScore: 5.5,
+    minGrade: "BB",
+    kellyFraction: 0.35,
+    lastVote: "HOLD",
+  },
+];
+
+const MOCK_CONSENSUS = {
+  reached: true,
+  finalAction: "BUY" as const,
+  votesFor: 2,
+  votesAgainst: 1,
+  weightedSize: 4.8,
+};
+
+const PROFILE_COLORS: Record<string, string> = {
+  conservative: "border-blue-600",
+  balanced: "border-yellow-500",
+  aggressive: "border-red-500",
+};
+
+const VOTE_COLORS: Record<string, string> = {
+  BUY: "text-green-400",
+  SELL: "text-red-400",
+  HOLD: "text-yellow-400",
+  REJECT: "text-gray-500",
+};
+
+function MultiAgentConsensus() {
+  return (
+    <div className="bg-gray-900 rounded-lg p-6 border border-gray-800">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-lg font-semibold text-white">
+          Multi-Agent Consensus Mesh
+        </h2>
+        <span className="text-xs text-gray-400 bg-gray-800 px-2 py-1 rounded">
+          ERC-8004 Reputation Weighted
+        </span>
+      </div>
+
+      {/* Consensus Result Banner */}
+      <div
+        className={`rounded-lg p-3 mb-4 flex items-center justify-between ${
+          MOCK_CONSENSUS.reached
+            ? "bg-green-900/30 border border-green-700"
+            : "bg-gray-800 border border-gray-700"
+        }`}
+      >
+        <div>
+          <span className="text-sm font-medium text-gray-300">
+            Last Consensus:{" "}
+          </span>
+          <span
+            className={`font-bold ${
+              MOCK_CONSENSUS.reached ? "text-green-400" : "text-gray-400"
+            }`}
+          >
+            {MOCK_CONSENSUS.reached
+              ? `${MOCK_CONSENSUS.finalAction} (${MOCK_CONSENSUS.votesFor}/${MOCK_CONSENSUS.votesFor + MOCK_CONSENSUS.votesAgainst} votes)`
+              : "No Consensus"}
+          </span>
+        </div>
+        {MOCK_CONSENSUS.reached && (
+          <div className="text-right">
+            <p className="text-xs text-gray-400">Weighted Size</p>
+            <p className="text-white font-bold">
+              ${MOCK_CONSENSUS.weightedSize.toFixed(2)}
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Agent Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {MESH_AGENTS.map((agent) => (
+          <div
+            key={agent.id}
+            className={`bg-gray-800 rounded-lg p-4 border-l-4 ${PROFILE_COLORS[agent.profile]}`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-white capitalize">
+                {agent.profile}
+              </h3>
+              {agent.lastVote && (
+                <span
+                  className={`text-xs font-bold px-2 py-0.5 rounded bg-gray-700 ${VOTE_COLORS[agent.lastVote]}`}
+                >
+                  {agent.lastVote}
+                </span>
+              )}
+            </div>
+
+            <div className="space-y-1 text-xs text-gray-400">
+              <div className="flex justify-between">
+                <span>ERC-8004 Rep</span>
+                <span className="text-white font-medium">
+                  {agent.reputationScore.toFixed(1)} / 10
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Min Grade</span>
+                <span className="text-yellow-300 font-medium">
+                  {agent.minGrade}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span>Kelly Fraction</span>
+                <span className="text-white">
+                  {(agent.kellyFraction * 100).toFixed(0)}%
+                </span>
+              </div>
+            </div>
+
+            {/* Reputation bar */}
+            <div className="mt-3">
+              <div className="w-full bg-gray-700 rounded-full h-1.5">
+                <div
+                  className="bg-blue-500 h-1.5 rounded-full"
+                  style={{ width: `${(agent.reputationScore / 10) * 100}%` }}
+                />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="text-xs text-gray-500 mt-3">
+        Requires 2/3 agent agreement to execute. Sizes weighted by ERC-8004
+        reputation score.
       </p>
     </div>
   );
