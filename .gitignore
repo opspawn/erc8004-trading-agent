@@ -45,3 +45,4 @@ Thumbs.db
 # Hardhat
 contracts/coverage/
 contracts/coverage.json
+.vercel
