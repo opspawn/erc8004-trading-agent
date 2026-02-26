@@ -4105,6 +4105,377 @@ def run_adaptive_backtest(
     }
 
 
+# ── S35: Risk Management ──────────────────────────────────────────────────────
+
+_RISK_ASSETS = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "BNB/USD"]
+_RISK_DIRECTIONS = ("long", "short")
+
+
+def assess_trade_risk(agent_id: str, trade: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Assess risk of a proposed trade for a given agent.
+
+    Args:
+        agent_id: Agent identifier (used for seeding).
+        trade: Dict with keys: asset (str), size (float), direction (str).
+
+    Returns:
+        {agent_id, trade, position_size_pct, max_drawdown_risk, var_95,
+         risk_score, recommendation, reasoning, assessed_at}
+    """
+    asset = str(trade.get("asset", "BTC/USD"))
+    size = float(trade.get("size", 1000.0))
+    direction = str(trade.get("direction", "long")).lower()
+
+    # Deterministic seed from agent_id + asset
+    seed_key = f"{agent_id}:{asset}:{direction}"
+    seed_val = int(hashlib.md5(seed_key.encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    # Portfolio value: seeded per agent
+    portfolio_seed = int(hashlib.md5(f"{agent_id}:portfolio_value".encode()).hexdigest()[:8], 16)
+    portfolio_value = 10_000.0 + (portfolio_seed % 90_000)
+
+    # Position size as percentage of portfolio
+    position_size_pct = round(min(size / portfolio_value * 100.0, 100.0), 4)
+
+    # Asset volatility (deterministic per asset)
+    asset_vol_map = {
+        "BTC/USD": 0.045,
+        "ETH/USD": 0.062,
+        "SOL/USD": 0.085,
+        "AVAX/USD": 0.091,
+        "BNB/USD": 0.052,
+    }
+    base_vol = asset_vol_map.get(asset, 0.07)
+    # Add small seeded jitter (±20% of base vol)
+    vol_jitter = (rng.random() - 0.5) * 0.4 * base_vol
+    volatility = round(max(0.01, base_vol + vol_jitter), 6)
+
+    # VaR 95%: position_size * volatility * z-score(0.95=1.645)
+    var_95 = round(size * volatility * 1.645, 4)
+
+    # Max drawdown risk: scale with position_size_pct and volatility
+    max_drawdown_risk = round(min(position_size_pct * volatility * 3.0, 99.0), 4)
+
+    # Risk score 0-10: combine position concentration, vol, and drawdown risk
+    concentration_penalty = min(position_size_pct / 10.0, 5.0)  # 0-5 points
+    vol_penalty = min(volatility * 50.0, 3.0)                    # 0-3 points
+    direction_penalty = 0.5 if direction == "short" else 0.0      # 0.5 for shorts
+    drawdown_penalty = min(max_drawdown_risk / 25.0, 2.0)         # 0-2 points
+    risk_score = round(
+        min(10.0, concentration_penalty + vol_penalty + direction_penalty + drawdown_penalty),
+        2,
+    )
+
+    # Recommendation
+    if risk_score <= 3.0:
+        recommendation = "proceed"
+        reasoning = (
+            f"Risk score {risk_score}/10 is acceptable. Position is {position_size_pct:.1f}% "
+            f"of portfolio with VaR(95%) of ${var_95:,.2f}. Proceed within normal parameters."
+        )
+    elif risk_score <= 6.5:
+        recommendation = "reduce"
+        suggested_size = round(size * (6.5 / risk_score) * 0.7, 2)
+        reasoning = (
+            f"Risk score {risk_score}/10 is elevated. {asset} volatility is {volatility:.1%}. "
+            f"Consider reducing position size to ~${suggested_size:,.2f} to lower risk score below 4."
+        )
+    else:
+        recommendation = "reject"
+        reasoning = (
+            f"Risk score {risk_score}/10 exceeds safe threshold. Position would represent "
+            f"{position_size_pct:.1f}% of portfolio with max drawdown risk of {max_drawdown_risk:.1f}%. "
+            f"Reject trade to protect capital."
+        )
+
+    return {
+        "agent_id": agent_id,
+        "trade": {"asset": asset, "size": size, "direction": direction},
+        "portfolio_value": round(portfolio_value, 2),
+        "position_size_pct": position_size_pct,
+        "volatility": volatility,
+        "var_95": var_95,
+        "max_drawdown_risk": max_drawdown_risk,
+        "risk_score": risk_score,
+        "recommendation": recommendation,
+        "reasoning": reasoning,
+        "assessed_at": time.time(),
+    }
+
+
+# ── S35: Portfolio Rebalancing ────────────────────────────────────────────────
+
+_REBALANCE_ASSETS = ["BTC", "ETH", "SOL", "AVAX", "USDC"]
+
+
+def rebalance_portfolio(
+    target_allocations: Dict[str, float],
+    agent_id: str = "default",
+) -> Dict[str, Any]:
+    """
+    Compute rebalancing trades to move current allocations toward target_allocations.
+
+    Args:
+        target_allocations: {asset: target_pct} — must sum to ~100.
+        agent_id:           Used to seed current allocations deterministically.
+
+    Returns:
+        {current_allocations, target_allocations, rebalance_trades,
+         estimated_cost_bps, expected_improvement_pct, rebalanced_at}
+    """
+    # Validate and normalise target allocations
+    total_target = sum(target_allocations.values())
+    if total_target <= 0:
+        raise ValueError("target_allocations must have positive values")
+
+    normalised_target = {
+        k: round(v / total_target * 100.0, 4)
+        for k, v in target_allocations.items()
+    }
+
+    # Deterministically generate current allocations seeded by agent_id
+    seed_val = int(hashlib.md5(f"{agent_id}:current_alloc".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+    assets = list(normalised_target.keys())
+
+    raw_current = [rng.uniform(0.05, 0.40) for _ in assets]
+    total_raw = sum(raw_current)
+    current_allocations = {
+        a: round(v / total_raw * 100.0, 4)
+        for a, v in zip(assets, raw_current)
+    }
+
+    # Compute drift per asset and generate trades
+    rebalance_trades = []
+    total_drift_pct = 0.0
+    for asset in assets:
+        current_pct = current_allocations.get(asset, 0.0)
+        target_pct = normalised_target.get(asset, 0.0)
+        drift = target_pct - current_pct
+        total_drift_pct += abs(drift)
+
+        if abs(drift) < 0.5:
+            # Within tolerance — no trade needed
+            continue
+
+        # Estimate trade amount (assuming $100K portfolio)
+        portfolio_size = 100_000.0
+        amount = round(abs(drift) / 100.0 * portfolio_size, 2)
+        action = "buy" if drift > 0 else "sell"
+
+        reason = (
+            f"Rebalance {asset}: current {current_pct:.1f}% → target {target_pct:.1f}% "
+            f"({'underweight' if drift > 0 else 'overweight'} by {abs(drift):.1f}%)"
+        )
+        rebalance_trades.append({
+            "action": action,
+            "asset": asset,
+            "amount": amount,
+            "current_pct": current_pct,
+            "target_pct": target_pct,
+            "drift_pct": round(drift, 4),
+            "reason": reason,
+        })
+
+    # Sort trades: sells first (free up capital), then buys
+    rebalance_trades.sort(key=lambda t: (0 if t["action"] == "sell" else 1, t["asset"]))
+
+    # Estimated transaction cost: ~5 bps per trade leg
+    estimated_cost_bps = round(len(rebalance_trades) * 5.0 + total_drift_pct * 0.1, 2)
+
+    # Expected improvement: Sharpe improvement proxy from reduced drift
+    # More drift corrected → bigger improvement
+    improvement_seed = int(hashlib.md5(f"{agent_id}:{total_drift_pct:.1f}".encode()).hexdigest()[:8], 16)
+    improvement_base = (improvement_seed % 1000) / 10000.0  # 0-10%
+    expected_improvement_pct = round(min(25.0, total_drift_pct * 0.15 + improvement_base * 10.0), 4)
+
+    return {
+        "agent_id": agent_id,
+        "current_allocations": current_allocations,
+        "target_allocations": normalised_target,
+        "rebalance_trades": rebalance_trades,
+        "total_drift_pct": round(total_drift_pct, 4),
+        "trade_count": len(rebalance_trades),
+        "estimated_cost_bps": estimated_cost_bps,
+        "expected_improvement_pct": expected_improvement_pct,
+        "rebalanced_at": time.time(),
+    }
+
+
+# ── S35: Agent Collaboration ──────────────────────────────────────────────────
+
+_COLLAB_ROLES = ("lead", "support", "validator")
+_COLLAB_TASK_KEYWORDS: Dict[str, str] = {
+    "risk":       "risk assessment",
+    "rebalanc":   "portfolio rebalancing",
+    "arbitrage":  "cross-market arbitrage",
+    "sentiment":  "sentiment analysis",
+    "backtest":   "strategy backtesting",
+    "compliance": "compliance validation",
+    "portfolio":  "portfolio optimisation",
+    "strategy":   "strategy coordination",
+}
+
+
+def plan_agent_collaboration(
+    agent_ids: List[str],
+    task_description: str,
+) -> Dict[str, Any]:
+    """
+    Build a collaboration plan for a set of agents on a shared task.
+
+    Assigns roles deterministically: the agent whose hash is highest becomes
+    lead; remainder split between support and validator.
+
+    Args:
+        agent_ids:        List of agent identifiers (1–10).
+        task_description: Free-text task description.
+
+    Returns:
+        {task, agents_with_roles, collaboration_plan, expected_synergy_score,
+         coordination_overhead_pct, planned_at}
+    """
+    if not agent_ids:
+        raise ValueError("agent_ids must be non-empty")
+    if len(agent_ids) > 10:
+        raise ValueError("agent_ids may contain at most 10 agents")
+
+    # Deterministic role assignment: sort by hash of (agent_id, task)
+    task_seed = hashlib.md5(task_description.encode()).hexdigest()[:8]
+
+    def _agent_hash(aid: str) -> int:
+        return int(hashlib.md5(f"{aid}:{task_seed}".encode()).hexdigest()[:8], 16)
+
+    sorted_agents = sorted(agent_ids, key=_agent_hash, reverse=True)
+    lead = sorted_agents[0]
+    rest = sorted_agents[1:]
+
+    agents_with_roles: List[Dict[str, str]] = [{"agent_id": lead, "role": "lead"}]
+    for i, aid in enumerate(rest):
+        role = "validator" if i % 3 == 2 else "support"
+        agents_with_roles.append({"agent_id": aid, "role": role})
+
+    # Detect task category
+    task_lower = task_description.lower()
+    task_category = "general coordination"
+    for keyword, category in _COLLAB_TASK_KEYWORDS.items():
+        if keyword in task_lower:
+            task_category = category
+            break
+
+    # Build collaboration steps (5 canonical steps)
+    collaboration_steps = [
+        {
+            "step": 1,
+            "phase": "Briefing",
+            "responsible": lead,
+            "action": f"Lead agent ({lead}) reviews task: '{task_description[:80]}' and distributes subtask assignments",
+            "estimated_duration_s": 2,
+        },
+        {
+            "step": 2,
+            "phase": "Parallel Execution",
+            "responsible": [a["agent_id"] for a in agents_with_roles if a["role"] == "support"] or [lead],
+            "action": f"Support agents execute {task_category} subtasks in parallel",
+            "estimated_duration_s": 10 + len(agent_ids) * 2,
+        },
+        {
+            "step": 3,
+            "phase": "Aggregation",
+            "responsible": lead,
+            "action": "Lead agent aggregates results from all support agents",
+            "estimated_duration_s": 3,
+        },
+        {
+            "step": 4,
+            "phase": "Validation",
+            "responsible": [a["agent_id"] for a in agents_with_roles if a["role"] == "validator"] or [lead],
+            "action": "Validator agents verify correctness and flag anomalies",
+            "estimated_duration_s": 5,
+        },
+        {
+            "step": 5,
+            "phase": "Consensus",
+            "responsible": lead,
+            "action": "Lead agent produces final consensus output and broadcasts to task requestor",
+            "estimated_duration_s": 2,
+        },
+    ]
+
+    # Synergy score: 0-1, increases with more agents (diminishing returns) + role diversity
+    n = len(agent_ids)
+    role_diversity = len({a["role"] for a in agents_with_roles}) / len(_COLLAB_ROLES)
+    synergy_base = 1.0 - 1.0 / (1.0 + n * 0.4)
+    expected_synergy_score = round(min(0.99, synergy_base * (0.7 + 0.3 * role_diversity)), 4)
+
+    # Coordination overhead: grows with agent count (communication complexity = O(n²))
+    coordination_overhead_pct = round(min(40.0, n * n * 0.8), 2)
+
+    return {
+        "task": task_description,
+        "task_category": task_category,
+        "agents_with_roles": agents_with_roles,
+        "collaboration_plan": {
+            "steps": collaboration_steps,
+            "total_steps": len(collaboration_steps),
+            "estimated_total_duration_s": sum(
+                s["estimated_duration_s"] for s in collaboration_steps
+            ),
+        },
+        "expected_synergy_score": expected_synergy_score,
+        "coordination_overhead_pct": coordination_overhead_pct,
+        "agent_count": n,
+        "planned_at": time.time(),
+    }
+
+
+# ── S35: Live P&L Streaming ───────────────────────────────────────────────────
+
+
+def _generate_pnl_snapshot(agent_id: str, tick: int) -> Dict[str, Any]:
+    """
+    Generate a deterministic but evolving P&L snapshot for an agent.
+
+    Uses tick to produce time-varying values while keeping them stable
+    enough to look realistic.
+    """
+    seed_val = int(hashlib.md5(f"{agent_id}:pnl_base".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val ^ (tick * 0x9e3779b9))
+
+    # Seed initial portfolio values
+    initial_capital = 10_000.0 + (seed_val % 90_000)
+    drift = rng.gauss(0.0005, 0.002)      # ~0.05%/tick drift ± 0.2%
+    vol_shock = rng.gauss(0.0, 0.001)
+
+    # Cumulative PnL grows with tick (random walk with slight upward drift)
+    total_pnl = round(initial_capital * (drift * tick + vol_shock * (tick ** 0.5)), 4)
+    realized_frac = 0.4 + (seed_val % 100) / 400.0   # 40–65% realised
+    realized_pnl = round(total_pnl * realized_frac, 4)
+    unrealized_pnl = round(total_pnl - realized_pnl, 4)
+
+    # Peak value tracking (monotonically non-decreasing approximation)
+    peak_value = round(initial_capital + max(0, total_pnl * 1.1), 4)
+    current_value = initial_capital + total_pnl
+    if peak_value > 0 and current_value < peak_value:
+        drawdown_pct = round((peak_value - current_value) / peak_value * 100.0, 4)
+    else:
+        drawdown_pct = 0.0
+
+    return {
+        "agent_id": agent_id,
+        "tick": tick,
+        "realized_pnl": realized_pnl,
+        "unrealized_pnl": unrealized_pnl,
+        "total_pnl": total_pnl,
+        "portfolio_value": round(current_value, 4),
+        "peak_value": peak_value,
+        "drawdown_pct": drawdown_pct,
+        "timestamp": time.time(),
+    }
+
+
 # Seed the feed buffer on module load
 _SERVER_START_TIME = time.time()
 _seed_feed_buffer()
@@ -4308,6 +4679,15 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._handle_agent_history(agent_id, qs)
             else:
                 self._send_json(404, {"error": f"Not found: {path}"})
+        # S35: Live P&L stream (path /demo/agents/{id}/pnl/stream)
+        elif path.startswith("/demo/agents/") and path.endswith("/pnl/stream"):
+            parts = path.split("/")
+            # Expected: ['', 'demo', 'agents', '{agent_id}', 'pnl', 'stream']
+            if len(parts) == 6 and parts[4] == "pnl" and parts[5] == "stream" and parts[3]:
+                agent_id = parts[3]
+                self._handle_agent_pnl_stream(agent_id)
+            else:
+                self._send_json(404, {"error": f"Not found: {path}"})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -4357,6 +4737,15 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S34: Adaptive backtest
         elif path in ("/demo/backtest/adaptive",):
             self._handle_adaptive_backtest()
+        # S35: Risk assessment
+        elif path in ("/demo/risk/assess",):
+            self._handle_risk_assess()
+        # S35: Portfolio rebalance
+        elif path in ("/demo/portfolio/rebalance",):
+            self._handle_portfolio_rebalance()
+        # S35: Agent collaboration
+        elif path in ("/demo/agents/collaborate",):
+            self._handle_agents_collaborate()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -4866,6 +5255,130 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._send_json(200, result)
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    # ── S35 handlers ──────────────────────────────────────────────────────────
+
+    def _handle_risk_assess(self) -> None:
+        """Handle POST /demo/risk/assess — trade risk assessment."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_id = body.get("agent_id")
+        if not agent_id:
+            self._send_json(400, {"error": "'agent_id' is required"})
+            return
+
+        trade = body.get("trade")
+        if not isinstance(trade, dict):
+            self._send_json(400, {"error": "'trade' must be an object"})
+            return
+
+        try:
+            result = assess_trade_risk(agent_id=agent_id, trade=trade)
+            self._send_json(200, result)
+        except (ValueError, TypeError) as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_portfolio_rebalance(self) -> None:
+        """Handle POST /demo/portfolio/rebalance — portfolio rebalancing."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        target_allocations = body.get("target_allocations")
+        if not isinstance(target_allocations, dict) or not target_allocations:
+            self._send_json(400, {"error": "'target_allocations' must be a non-empty object"})
+            return
+
+        # Validate all values are numeric and positive
+        for asset, val in target_allocations.items():
+            if not isinstance(val, (int, float)) or val < 0:
+                self._send_json(400, {"error": f"Allocation for '{asset}' must be a non-negative number"})
+                return
+
+        agent_id = body.get("agent_id", "default")
+
+        try:
+            result = rebalance_portfolio(
+                target_allocations={k: float(v) for k, v in target_allocations.items()},
+                agent_id=str(agent_id),
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_agents_collaborate(self) -> None:
+        """Handle POST /demo/agents/collaborate — multi-agent collaboration plan."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_ids = body.get("agent_ids")
+        if not isinstance(agent_ids, list) or not agent_ids:
+            self._send_json(400, {"error": "'agent_ids' must be a non-empty list"})
+            return
+
+        task_description = body.get("task_description", "")
+        if not isinstance(task_description, str):
+            self._send_json(400, {"error": "'task_description' must be a string"})
+            return
+
+        try:
+            result = plan_agent_collaboration(
+                agent_ids=[str(a) for a in agent_ids],
+                task_description=task_description,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_agent_pnl_stream(self, agent_id: str) -> None:
+        """Handle GET /demo/agents/{id}/pnl/stream — SSE P&L stream."""
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+
+            # Send initial connected event
+            connected_evt = json.dumps({"event": "connected", "agent_id": agent_id})
+            self.wfile.write(f"data: {connected_evt}\n\n".encode("utf-8"))
+            self.wfile.flush()
+
+            # Stream P&L snapshots every 2 seconds (max 30 ticks for test safety)
+            tick = 0
+            max_ticks = 30
+            while tick < max_ticks:
+                snapshot = _generate_pnl_snapshot(agent_id=agent_id, tick=tick)
+                payload = json.dumps(snapshot)
+                self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                self.wfile.flush()
+                tick += 1
+                time.sleep(2.0)
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
