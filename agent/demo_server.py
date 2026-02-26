@@ -4476,6 +4476,553 @@ def _generate_pnl_snapshot(agent_id: str, tick: int) -> Dict[str, Any]:
     }
 
 
+# ── S36: Multi-Agent Tournament ───────────────────────────────────────────────
+
+_TOURNAMENT_STRATEGY_TYPES = {"momentum", "mean_reversion", "arbitrage", "ml_hybrid", "conservative", "balanced", "aggressive"}
+
+
+def _agent_strategy_for_tournament(agent_id: str) -> str:
+    """Derive a deterministic strategy type from agent_id."""
+    strategy_types = sorted(_TOURNAMENT_STRATEGY_TYPES)
+    idx = int(hashlib.md5(f"{agent_id}:strategy".encode()).hexdigest()[:4], 16) % len(strategy_types)
+    return strategy_types[idx]
+
+
+def _simulate_match(
+    agent_a: str,
+    agent_b: str,
+    duration_hours: float,
+    market_conditions: Dict[str, Any],
+    seed: int,
+) -> Dict[str, Any]:
+    """
+    Simulate a head-to-head match between two agents.
+
+    Returns: {winner, loser, agent_a_pnl, agent_b_pnl, trades_a, trades_b,
+              winner_sharpe, duration_hours}
+    """
+    rng = random.Random(seed)
+
+    strat_a = _agent_strategy_for_tournament(agent_a)
+    strat_b = _agent_strategy_for_tournament(agent_b)
+
+    # Strategy performance multipliers (seeded deterministic)
+    _strategy_mu = {
+        "momentum": 0.0012,
+        "mean_reversion": 0.0008,
+        "arbitrage": 0.0015,
+        "ml_hybrid": 0.0014,
+        "conservative": 0.0006,
+        "balanced": 0.0009,
+        "aggressive": 0.0018,
+    }
+
+    mu_a = _strategy_mu.get(strat_a, 0.001)
+    mu_b = _strategy_mu.get(strat_b, 0.001)
+
+    # Market regime modifier
+    volatility = float(market_conditions.get("volatility", 0.02))
+    trend = float(market_conditions.get("trend", 0.0))  # -1 to 1
+
+    # Number of simulated trades scales with duration
+    base_trades = max(5, int(duration_hours * 4))
+    trades_a = base_trades + rng.randint(-2, 4)
+    trades_b = base_trades + rng.randint(-2, 4)
+
+    # Compute PnL for each agent
+    pnl_a = 0.0
+    for _ in range(trades_a):
+        ret = rng.gauss(mu_a + trend * 0.0003, volatility * 0.5)
+        pnl_a += ret * 10_000.0
+
+    pnl_b = 0.0
+    for _ in range(trades_b):
+        ret = rng.gauss(mu_b + trend * 0.0003, volatility * 0.5)
+        pnl_b += ret * 10_000.0
+
+    pnl_a = round(pnl_a, 4)
+    pnl_b = round(pnl_b, 4)
+
+    # Sharpe proxy: pnl / (vol * sqrt(trades))
+    def _sharpe_proxy(pnl: float, trades: int, vol: float) -> float:
+        if trades < 2:
+            return 0.0
+        return round(pnl / max(abs(pnl) * vol * math.sqrt(trades), 0.01), 4)
+
+    sharpe_a = _sharpe_proxy(pnl_a, trades_a, volatility)
+    sharpe_b = _sharpe_proxy(pnl_b, trades_b, volatility)
+
+    if pnl_a >= pnl_b:
+        winner, loser = agent_a, agent_b
+        winner_sharpe = sharpe_a
+    else:
+        winner, loser = agent_b, agent_a
+        winner_sharpe = sharpe_b
+
+    return {
+        "agent_a": agent_a,
+        "agent_b": agent_b,
+        "strategy_a": strat_a,
+        "strategy_b": strat_b,
+        "agent_a_pnl": pnl_a,
+        "agent_b_pnl": pnl_b,
+        "trades_a": trades_a,
+        "trades_b": trades_b,
+        "winner": winner,
+        "loser": loser,
+        "winner_sharpe": winner_sharpe,
+        "duration_hours": round(duration_hours, 2),
+    }
+
+
+def run_tournament(
+    agent_ids: List[str],
+    duration_hours: float,
+    market_conditions: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Run a multi-agent tournament with round-robin qualifying, top-4 semifinals,
+    and top-2 finals.
+
+    Args:
+        agent_ids:         List of agent identifiers (≥2).
+        duration_hours:    Duration of each match in simulated hours (>0).
+        market_conditions: Dict with optional keys: volatility (float), trend (float).
+
+    Returns:
+        {bracket, winner, final_rankings, tournament_stats}
+    """
+    if not isinstance(agent_ids, list) or len(agent_ids) < 2:
+        raise ValueError("agent_ids must be a list of at least 2 agents")
+    if duration_hours <= 0:
+        raise ValueError("duration_hours must be positive")
+    if not isinstance(market_conditions, dict):
+        raise ValueError("market_conditions must be a dict")
+
+    # Deduplicate agent list
+    seen: set = set()
+    unique_agents: List[str] = []
+    for a in agent_ids:
+        if str(a) not in seen:
+            seen.add(str(a))
+            unique_agents.append(str(a))
+
+    # Deterministic seed from tournament parameters
+    seed_key = f"{'|'.join(sorted(unique_agents))}:{duration_hours}:{sorted(market_conditions.items())}"
+    base_seed = int(hashlib.md5(seed_key.encode()).hexdigest()[:8], 16)
+
+    # ── Round Robin Qualifying ────────────────────────────────────────────────
+    qualifying_matches = []
+    agent_scores: Dict[str, Dict[str, Any]] = {a: {"wins": 0, "total_pnl": 0.0, "trades": 0} for a in unique_agents}
+    match_idx = 0
+
+    for i in range(len(unique_agents)):
+        for j in range(i + 1, len(unique_agents)):
+            a, b = unique_agents[i], unique_agents[j]
+            match_seed = base_seed ^ (match_idx * 0xDEADBEEF)
+            result = _simulate_match(a, b, duration_hours, market_conditions, match_seed)
+            qualifying_matches.append(result)
+            agent_scores[result["winner"]]["wins"] += 1
+            agent_scores[a]["total_pnl"] += result["agent_a_pnl"]
+            agent_scores[b]["total_pnl"] += result["agent_b_pnl"]
+            agent_scores[a]["trades"] += result["trades_a"]
+            agent_scores[b]["trades"] += result["trades_b"]
+            match_idx += 1
+
+    # Rank by wins, then by total_pnl
+    ranked = sorted(
+        unique_agents,
+        key=lambda a: (agent_scores[a]["wins"], agent_scores[a]["total_pnl"]),
+        reverse=True,
+    )
+
+    # ── Semifinals (top 4) ────────────────────────────────────────────────────
+    top_4 = ranked[:4]
+    # Pad to at least 4 if fewer agents
+    while len(top_4) < 4:
+        top_4.append(top_4[-1])
+
+    semi_matches = []
+    semifinal_winners = []
+    for k in range(0, 2):
+        if k * 2 + 1 < len(top_4):
+            a, b = top_4[k * 2], top_4[k * 2 + 1]
+        else:
+            a = b = top_4[0]
+        match_seed = base_seed ^ ((match_idx + k) * 0xBEEFCAFE)
+        result = _simulate_match(a, b, duration_hours, market_conditions, match_seed)
+        semi_matches.append(result)
+        semifinal_winners.append(result["winner"])
+        match_idx += 1
+
+    # ── Finals (top 2) ────────────────────────────────────────────────────────
+    final_a = semifinal_winners[0] if len(semifinal_winners) > 0 else top_4[0]
+    final_b = semifinal_winners[1] if len(semifinal_winners) > 1 else top_4[1]
+    final_seed = base_seed ^ (match_idx * 0xFEEDFACE)
+    final_match = _simulate_match(final_a, final_b, duration_hours, market_conditions, final_seed)
+    winner = final_match["winner"]
+
+    # ── Final Rankings ────────────────────────────────────────────────────────
+    # Sort all agents by qualifying performance for complete ranking
+    final_rankings = [
+        {
+            "rank": i + 1,
+            "agent_id": a,
+            "strategy": _agent_strategy_for_tournament(a),
+            "qualifying_wins": agent_scores[a]["wins"],
+            "total_pnl": round(agent_scores[a]["total_pnl"], 4),
+            "total_trades": agent_scores[a]["trades"],
+            "avg_pnl": round(agent_scores[a]["total_pnl"] / max(agent_scores[a]["trades"], 1), 6),
+        }
+        for i, a in enumerate(ranked)
+    ]
+
+    # ── Tournament Stats ──────────────────────────────────────────────────────
+    all_matches = qualifying_matches + semi_matches + [final_match]
+    total_trades = sum(m["trades_a"] + m["trades_b"] for m in all_matches)
+    all_pnls = [m["agent_a_pnl"] for m in all_matches] + [m["agent_b_pnl"] for m in all_matches]
+    avg_pnl = round(sum(all_pnls) / len(all_pnls), 4) if all_pnls else 0.0
+    pnl_values = [abs(p) for p in all_pnls if p != 0]
+    volatility_out = round(
+        math.sqrt(sum(p ** 2 for p in all_pnls) / max(len(all_pnls), 1)), 4
+    )
+
+    bracket = {
+        "qualifying": qualifying_matches,
+        "semifinals": semi_matches,
+        "final": final_match,
+    }
+
+    return {
+        "bracket": bracket,
+        "winner": winner,
+        "winner_strategy": _agent_strategy_for_tournament(winner),
+        "final_rankings": final_rankings,
+        "tournament_stats": {
+            "total_matches": len(all_matches),
+            "total_trades": total_trades,
+            "avg_pnl": avg_pnl,
+            "volatility": volatility_out,
+            "duration_hours": round(duration_hours, 2),
+            "agent_count": len(unique_agents),
+        },
+        "market_conditions": market_conditions,
+        "generated_at": time.time(),
+    }
+
+
+# ── S36: Strategy Backtester UI ───────────────────────────────────────────────
+
+_BACKTEST_UI_STRATEGIES = {"momentum", "mean_reversion", "arbitrage", "ml_hybrid"}
+_BACKTEST_UI_MAX_DAYS = 365 * 5  # 5 years
+
+
+def run_backtest_ui(
+    strategy_config: Dict[str, Any],
+    lookback_days: int,
+    assets: List[str],
+) -> Dict[str, Any]:
+    """
+    Run a strategy backtest with full analytics suitable for a UI display.
+
+    Args:
+        strategy_config: {type: str, params: {window: int, threshold: float, leverage: float}}
+        lookback_days:   Number of historical days to backtest.
+        assets:          List of asset symbols to include.
+
+    Returns:
+        {equity_curve, sharpe_ratio, max_drawdown_pct, win_rate, profit_factor,
+         total_return_pct, benchmark_return_pct, alpha, beta}
+    """
+    strat_type = str(strategy_config.get("type", "momentum")).lower()
+    if strat_type not in _BACKTEST_UI_STRATEGIES:
+        raise ValueError(
+            f"Unknown strategy type '{strat_type}'. Valid: {sorted(_BACKTEST_UI_STRATEGIES)}"
+        )
+
+    params = strategy_config.get("params", {})
+    if not isinstance(params, dict):
+        raise ValueError("strategy_config.params must be a dict")
+
+    window = max(2, int(params.get("window", 10)))
+    threshold = float(params.get("threshold", 0.01))
+    leverage = max(0.1, min(float(params.get("leverage", 1.0)), 10.0))
+
+    if lookback_days < 1:
+        raise ValueError("lookback_days must be at least 1")
+    lookback_days = min(lookback_days, _BACKTEST_UI_MAX_DAYS)
+
+    if not isinstance(assets, list) or len(assets) == 0:
+        raise ValueError("assets must be a non-empty list")
+
+    # Deterministic seed from all inputs
+    seed_key = f"{strat_type}:{window}:{threshold:.6f}:{leverage:.4f}:{lookback_days}:{'|'.join(sorted(assets))}"
+    base_seed = int(hashlib.md5(seed_key.encode()).hexdigest()[:8], 16)
+    rng = random.Random(base_seed)
+
+    # ── Simulate portfolio equity curve ──────────────────────────────────────
+    # Strategy performance profile: base daily return and volatility
+    _strat_profiles = {
+        "momentum": {"mu": 0.0004, "sigma": 0.018, "win_prob": 0.54},
+        "mean_reversion": {"mu": 0.0003, "sigma": 0.012, "win_prob": 0.57},
+        "arbitrage": {"mu": 0.0006, "sigma": 0.009, "win_prob": 0.62},
+        "ml_hybrid": {"mu": 0.0005, "sigma": 0.015, "win_prob": 0.55},
+    }
+    profile = _strat_profiles[strat_type]
+
+    # Adjust for params
+    mu = profile["mu"] * leverage + (threshold - 0.01) * 0.002
+    sigma = profile["sigma"] * (1.0 + (leverage - 1.0) * 0.2)
+    win_prob = profile["win_prob"] + (window - 10) * 0.001
+
+    initial_capital = 10_000.0
+    equity = [initial_capital]
+    wins = 0
+    losses = 0
+    gross_profit = 0.0
+    gross_loss = 0.0
+
+    for _ in range(lookback_days):
+        ret = rng.gauss(mu, sigma)
+        new_val = equity[-1] * (1.0 + ret)
+        equity.append(max(new_val, 0.01))
+        if ret > 0:
+            wins += 1
+            gross_profit += ret * equity[-2]
+        elif ret < 0:
+            losses += 1
+            gross_loss += abs(ret) * equity[-2]
+
+    final_equity = equity[-1]
+    total_return_pct = round((final_equity - initial_capital) / initial_capital * 100.0, 4)
+
+    # Max drawdown
+    max_dd = _compute_max_drawdown(equity)
+
+    # Daily returns for Sharpe
+    daily_returns = [
+        (equity[i] - equity[i - 1]) / equity[i - 1] if equity[i - 1] > 0 else 0.0
+        for i in range(1, len(equity))
+    ]
+    sharpe = _compute_sharpe(daily_returns)
+
+    # Win rate and profit factor
+    total_trades = wins + losses
+    win_rate = round(wins / total_trades, 4) if total_trades > 0 else 0.0
+    profit_factor = round(gross_profit / gross_loss, 4) if gross_loss > 0 else float("inf")
+    if profit_factor == float("inf"):
+        profit_factor = 99.9999
+
+    # Benchmark: buy-and-hold (uses same GBM but no strategy)
+    bm_rng = random.Random(base_seed + 999)
+    bm_equity = [initial_capital]
+    for _ in range(lookback_days):
+        ret = bm_rng.gauss(0.0002, 0.02)
+        bm_equity.append(max(bm_equity[-1] * (1.0 + ret), 0.01))
+    benchmark_return_pct = round(
+        (bm_equity[-1] - initial_capital) / initial_capital * 100.0, 4
+    )
+
+    # Alpha and beta vs benchmark
+    bm_returns = [
+        (bm_equity[i] - bm_equity[i - 1]) / bm_equity[i - 1] if bm_equity[i - 1] > 0 else 0.0
+        for i in range(1, len(bm_equity))
+    ]
+    n = min(len(daily_returns), len(bm_returns))
+    if n >= 2:
+        mean_r = sum(daily_returns[:n]) / n
+        mean_b = sum(bm_returns[:n]) / n
+        cov = sum((daily_returns[i] - mean_r) * (bm_returns[i] - mean_b) for i in range(n)) / max(n - 1, 1)
+        var_b = sum((bm_returns[i] - mean_b) ** 2 for i in range(n)) / max(n - 1, 1)
+        beta = round(cov / var_b, 4) if var_b > 0 else 0.0
+        alpha = round((mean_r - beta * mean_b) * 252, 4)  # annualised
+    else:
+        beta = 0.0
+        alpha = 0.0
+
+    # Downsample equity_curve to at most 252 points for response size
+    step = max(1, len(equity) // 252)
+    equity_curve = [round(v, 2) for v in equity[::step]]
+    if equity_curve[-1] != round(equity[-1], 2):
+        equity_curve.append(round(equity[-1], 2))
+
+    return {
+        "strategy_config": {
+            "type": strat_type,
+            "params": {"window": window, "threshold": threshold, "leverage": leverage},
+        },
+        "lookback_days": lookback_days,
+        "assets": assets,
+        "equity_curve": equity_curve,
+        "sharpe_ratio": sharpe,
+        "max_drawdown_pct": max_dd,
+        "win_rate": win_rate,
+        "profit_factor": profit_factor,
+        "total_return_pct": total_return_pct,
+        "benchmark_return_pct": benchmark_return_pct,
+        "alpha": alpha,
+        "beta": beta,
+        "total_trades": total_trades,
+        "generated_at": time.time(),
+    }
+
+
+# ── S36: Market Regime Detection ──────────────────────────────────────────────
+
+_MARKET_REGIMES = ("trending", "ranging", "volatile", "crisis")
+
+_REGIME_OPTIMAL_STRATEGIES: Dict[str, List[str]] = {
+    "trending": ["momentum", "trend_following", "breakout"],
+    "ranging": ["mean_reversion", "pairs_trading", "market_making"],
+    "volatile": ["volatility_selling", "arbitrage", "hedged_momentum"],
+    "crisis": ["cash", "defensive", "short_volatility"],
+}
+
+
+def get_market_regime() -> Dict[str, Any]:
+    """
+    Return current market regime detection result.
+
+    Uses a deterministic seed based on hour-of-day to give a stable
+    but slowly rotating regime for demo purposes.
+
+    Returns:
+        {current_regime, regime_confidence_pct, regime_duration_hours,
+         optimal_strategies, regime_history}
+    """
+    # Seed from current hour for stable hour-long regime
+    now = time.time()
+    hour_bucket = int(now // 3600)  # changes each hour
+    seed_val = int(hashlib.md5(f"regime:{hour_bucket}".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    regime_idx = seed_val % len(_MARKET_REGIMES)
+    current_regime = _MARKET_REGIMES[regime_idx]
+
+    # Confidence and duration (deterministic)
+    regime_confidence_pct = round(55.0 + (seed_val % 40), 2)  # 55–94%
+    regime_duration_hours = round(2.0 + (seed_val % 22), 1)    # 2–23 hours
+
+    optimal_strategies = _REGIME_OPTIMAL_STRATEGIES[current_regime]
+
+    # Last 7 days history (one entry per day, seeded deterministically)
+    regime_history = []
+    import datetime as _dt
+    today = _dt.date.fromtimestamp(now)
+    for day_offset in range(6, -1, -1):
+        hist_date = today - _dt.timedelta(days=day_offset)
+        day_seed = int(hashlib.md5(f"regime:{hist_date.isoformat()}".encode()).hexdigest()[:8], 16)
+        day_rng = random.Random(day_seed)
+        hist_regime = _MARKET_REGIMES[day_seed % len(_MARKET_REGIMES)]
+        # Daily return: regime-dependent
+        _regime_returns = {
+            "trending": (0.005, 0.015),
+            "ranging": (0.001, 0.008),
+            "volatile": (-0.01, 0.04),
+            "crisis": (-0.03, 0.025),
+        }
+        mu, sigma = _regime_returns[hist_regime]
+        ret_pct = round(day_rng.gauss(mu, sigma) * 100.0, 4)
+        regime_history.append({
+            "date": hist_date.isoformat(),
+            "regime": hist_regime,
+            "return_pct": ret_pct,
+        })
+
+    return {
+        "current_regime": current_regime,
+        "regime_confidence_pct": regime_confidence_pct,
+        "regime_duration_hours": regime_duration_hours,
+        "optimal_strategies": optimal_strategies,
+        "regime_history": regime_history,
+        "generated_at": time.time(),
+    }
+
+
+# ── S36: Agent Performance Attribution ────────────────────────────────────────
+
+_ATTRIBUTION_COMPONENTS = ("strategy_alpha_pct", "market_beta_pct", "timing_pct", "risk_management_pct")
+
+
+def get_agent_attribution(agent_id: str) -> Dict[str, Any]:
+    """
+    Break down an agent's P&L by source: strategy alpha, market beta,
+    timing, and risk management.
+
+    Args:
+        agent_id: Agent identifier (used for seeding).
+
+    Returns:
+        {agent_id, contribution_analysis, total_pnl_usd, improvement_suggestions}
+    """
+    # Deterministic seed from agent_id
+    seed_val = int(hashlib.md5(f"{agent_id}:attribution".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    # Raw component weights (sum to ~100%)
+    raw = [max(0.05, rng.gauss(0.25, 0.12)) for _ in range(4)]
+    total_raw = sum(raw)
+    components_pct = [round(v / total_raw * 100.0, 4) for v in raw]
+
+    # Signs: alpha and timing can be negative in bad regimes
+    # beta is usually positive (market exposure), risk_mgmt is often positive
+    alpha_pct = round(components_pct[0] * (1 if seed_val % 3 != 0 else -0.5), 4)
+    beta_pct = round(components_pct[1], 4)
+    timing_pct = round(components_pct[2] * (1 if seed_val % 4 != 0 else -0.3), 4)
+    risk_mgmt_pct = round(components_pct[3], 4)
+
+    # Total PnL seeded from agent
+    portfolio_seed = int(hashlib.md5(f"{agent_id}:portfolio_value".encode()).hexdigest()[:8], 16)
+    portfolio_value = 10_000.0 + (portfolio_seed % 90_000)
+    total_return_bps = (seed_val % 400) - 50  # -50 to +350 bps
+    total_pnl_usd = round(portfolio_value * total_return_bps / 10_000.0, 4)
+
+    contribution_analysis = {
+        "strategy_alpha_pct": alpha_pct,
+        "market_beta_pct": beta_pct,
+        "timing_pct": timing_pct,
+        "risk_management_pct": risk_mgmt_pct,
+        "description": {
+            "strategy_alpha_pct": "P&L attributable to the agent's proprietary strategy edge",
+            "market_beta_pct": "P&L from passive market exposure (beta to benchmark)",
+            "timing_pct": "P&L from entry/exit timing decisions",
+            "risk_management_pct": "P&L impact of position sizing and stop-loss discipline",
+        },
+    }
+
+    # Improvement suggestions based on component analysis
+    improvement_suggestions = []
+    if alpha_pct < 5.0:
+        improvement_suggestions.append(
+            "Strategy alpha is low — consider retraining the signal model or switching to a regime-adaptive approach."
+        )
+    if abs(timing_pct) < 3.0:
+        improvement_suggestions.append(
+            "Timing contribution is minimal — explore execution timing improvements (VWAP, TWAP)."
+        )
+    if risk_mgmt_pct < 5.0:
+        improvement_suggestions.append(
+            "Risk management contribution is below average — review stop-loss placement and Kelly fraction."
+        )
+    if beta_pct > 60.0:
+        improvement_suggestions.append(
+            "High beta exposure: most returns come from market movement, not skill. Consider hedging."
+        )
+    if not improvement_suggestions:
+        improvement_suggestions.append(
+            "Agent shows balanced attribution across all four components. Maintain current approach."
+        )
+
+    return {
+        "agent_id": agent_id,
+        "total_pnl_usd": total_pnl_usd,
+        "portfolio_value": round(portfolio_value, 2),
+        "contribution_analysis": contribution_analysis,
+        "improvement_suggestions": improvement_suggestions,
+        "generated_at": time.time(),
+    }
+
+
 # Seed the feed buffer on module load
 _SERVER_START_TIME = time.time()
 _seed_feed_buffer()
@@ -4688,6 +5235,18 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._handle_agent_pnl_stream(agent_id)
             else:
                 self._send_json(404, {"error": f"Not found: {path}"})
+        # S36: Market regime detection
+        elif path in ("/demo/market/regime",):
+            self._send_json(200, get_market_regime())
+        # S36: Agent performance attribution (path /demo/agents/{id}/attribution)
+        elif path.startswith("/demo/agents/") and path.endswith("/attribution"):
+            parts = path.split("/")
+            # Expected: ['', 'demo', 'agents', '{agent_id}', 'attribution']
+            if len(parts) == 5 and parts[4] == "attribution" and parts[3]:
+                agent_id = parts[3]
+                self._send_json(200, get_agent_attribution(agent_id))
+            else:
+                self._send_json(404, {"error": f"Not found: {path}"})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -4746,6 +5305,12 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S35: Agent collaboration
         elif path in ("/demo/agents/collaborate",):
             self._handle_agents_collaborate()
+        # S36: Multi-agent tournament
+        elif path in ("/demo/tournament/run",):
+            self._handle_tournament_run()
+        # S36: Strategy backtester UI
+        elif path in ("/demo/backtest/run",):
+            self._handle_backtest_run()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -5344,6 +5909,84 @@ class _DemoHandler(BaseHTTPRequestHandler):
             result = plan_agent_collaboration(
                 agent_ids=[str(a) for a in agent_ids],
                 task_description=task_description,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    # ── S36 handlers ──────────────────────────────────────────────────────────
+
+    def _handle_tournament_run(self) -> None:
+        """Handle POST /demo/tournament/run — run multi-agent tournament."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_ids = body.get("agent_ids")
+        if not isinstance(agent_ids, list) or len(agent_ids) < 2:
+            self._send_json(400, {"error": "'agent_ids' must be a list of at least 2 agents"})
+            return
+
+        try:
+            duration_hours = float(body.get("duration_hours", 1.0))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "'duration_hours' must be a number"})
+            return
+
+        market_conditions = body.get("market_conditions", {})
+        if not isinstance(market_conditions, dict):
+            self._send_json(400, {"error": "'market_conditions' must be an object"})
+            return
+
+        try:
+            result = run_tournament(
+                agent_ids=[str(a) for a in agent_ids],
+                duration_hours=duration_hours,
+                market_conditions=market_conditions,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_backtest_run(self) -> None:
+        """Handle POST /demo/backtest/run — strategy backtester UI."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        strategy_config = body.get("strategy_config")
+        if not isinstance(strategy_config, dict):
+            self._send_json(400, {"error": "'strategy_config' must be an object"})
+            return
+
+        try:
+            lookback_days = int(body.get("lookback_days", 90))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "'lookback_days' must be an integer"})
+            return
+
+        assets = body.get("assets", ["BTC/USD"])
+        if not isinstance(assets, list) or len(assets) == 0:
+            self._send_json(400, {"error": "'assets' must be a non-empty list"})
+            return
+
+        try:
+            result = run_backtest_ui(
+                strategy_config=strategy_config,
+                lookback_days=lookback_days,
+                assets=[str(a) for a in assets],
             )
             self._send_json(200, result)
         except ValueError as exc:
