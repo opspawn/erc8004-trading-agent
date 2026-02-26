@@ -1113,6 +1113,534 @@ def _update_agent_health(run_result: Dict[str, Any]) -> None:
             }
 
 
+# ── Backtesting (S28) ─────────────────────────────────────────────────────────
+
+# GBM-based historical backtest simulation
+_BACKTEST_STRATEGIES = {"momentum", "mean_reversion", "buy_and_hold", "random"}
+_BACKTEST_MAX_DAYS = 3650  # 10 years
+
+
+def _gbm_price_series(
+    seed: int,
+    n_days: int,
+    mu: float = 0.0003,
+    sigma: float = 0.02,
+    s0: float = 100.0,
+) -> List[float]:
+    """Generate a GBM price series with n_days steps."""
+    import random as _rng
+    rng = _rng.Random(seed)
+    prices = [s0]
+    for _ in range(n_days):
+        dt = 1.0
+        z = rng.gauss(0, 1)
+        price = prices[-1] * math.exp((mu - 0.5 * sigma ** 2) * dt + sigma * math.sqrt(dt) * z)
+        prices.append(max(price, 0.01))
+    return prices
+
+
+def _compute_sharpe(returns: List[float], risk_free: float = 0.0) -> float:
+    """Annualised Sharpe from daily returns."""
+    if len(returns) < 2:
+        return 0.0
+    n = len(returns)
+    mean = sum(returns) / n
+    variance = sum((r - mean) ** 2 for r in returns) / max(n - 1, 1)
+    std = math.sqrt(variance)
+    if std == 0:
+        return 0.0
+    return round((mean - risk_free) * math.sqrt(252) / std, 4)
+
+
+def _compute_max_drawdown(equity: List[float]) -> float:
+    """Max drawdown as a percentage (0–100)."""
+    if len(equity) < 2:
+        return 0.0
+    peak = equity[0]
+    max_dd = 0.0
+    for val in equity:
+        if val > peak:
+            peak = val
+        dd = (peak - val) / peak * 100.0
+        if dd > max_dd:
+            max_dd = dd
+    return round(max_dd, 4)
+
+
+def build_backtest(
+    symbol: str,
+    strategy: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+) -> Dict[str, Any]:
+    """
+    Run a GBM-simulated historical backtest.
+
+    Args:
+        symbol:          Trading symbol (e.g. "BTC/USD")
+        strategy:        One of momentum|mean_reversion|buy_and_hold|random
+        start_date:      ISO date string "YYYY-MM-DD"
+        end_date:        ISO date string "YYYY-MM-DD"
+        initial_capital: Starting capital in USD
+
+    Returns:
+        dict with equity_curve, total_return_pct, max_drawdown_pct,
+        sharpe_ratio, num_trades, strategy, symbol, period_days
+    """
+    import datetime as _dt
+
+    if strategy not in _BACKTEST_STRATEGIES:
+        raise ValueError(
+            f"Unknown strategy '{strategy}'. Valid: {sorted(_BACKTEST_STRATEGIES)}"
+        )
+    if initial_capital <= 0:
+        raise ValueError("initial_capital must be positive")
+
+    try:
+        t_start = _dt.date.fromisoformat(start_date)
+        t_end = _dt.date.fromisoformat(end_date)
+    except ValueError as exc:
+        raise ValueError(f"Invalid date format (expected YYYY-MM-DD): {exc}") from exc
+
+    if t_end <= t_start:
+        raise ValueError("end_date must be after start_date")
+
+    n_days = (t_end - t_start).days
+    if n_days > _BACKTEST_MAX_DAYS:
+        raise ValueError(f"Period too long: max {_BACKTEST_MAX_DAYS} days")
+
+    # Deterministic seed from symbol + dates
+    seed = hash(f"{symbol}:{start_date}:{end_date}") & 0xFFFFFFFF
+
+    # Annual vol from symbol table (default 0.60 for BTC)
+    annual_vol = _SYMBOL_VOLATILITY.get(symbol, _SYMBOL_VOLATILITY["default"])
+    daily_vol = annual_vol / math.sqrt(_TRADING_DAYS)
+    # Simulate drift toward slight positive expectation
+    daily_mu = 0.0002
+
+    prices = _gbm_price_series(seed=seed, n_days=n_days, mu=daily_mu, sigma=daily_vol, s0=100.0)
+
+    # ── Strategy simulation ────────────────────────────────────────────────────
+    import random as _rng
+    rng = _rng.Random(seed + 1)
+
+    equity = [initial_capital]
+    num_trades = 0
+    position = 0.0  # shares held
+    cash = initial_capital
+    lookback = 5
+
+    if strategy == "buy_and_hold":
+        # Buy on day 0, sell at end
+        shares = initial_capital / prices[0]
+        for p in prices[1:]:
+            equity.append(shares * p)
+        num_trades = 2
+
+    elif strategy == "momentum":
+        shares_held = 0.0
+        for i in range(1, len(prices)):
+            if i >= lookback:
+                window = prices[i - lookback:i]
+                trend = (window[-1] - window[0]) / window[0]
+                if trend > 0.01 and shares_held == 0 and cash > 0:
+                    # Buy
+                    shares_held = cash * 0.95 / prices[i]
+                    cash -= shares_held * prices[i]
+                    num_trades += 1
+                elif trend < -0.01 and shares_held > 0:
+                    # Sell
+                    cash += shares_held * prices[i]
+                    shares_held = 0.0
+                    num_trades += 1
+            equity.append(cash + shares_held * prices[i])
+        if shares_held > 0:
+            cash += shares_held * prices[-1]
+            shares_held = 0.0
+
+    elif strategy == "mean_reversion":
+        shares_held = 0.0
+        for i in range(1, len(prices)):
+            if i >= lookback:
+                window = prices[i - lookback:i]
+                mean_p = sum(window) / len(window)
+                dev = (prices[i] - mean_p) / mean_p
+                if dev < -0.015 and shares_held == 0 and cash > 0:
+                    # Buy dip
+                    shares_held = cash * 0.90 / prices[i]
+                    cash -= shares_held * prices[i]
+                    num_trades += 1
+                elif dev > 0.015 and shares_held > 0:
+                    # Sell rally
+                    cash += shares_held * prices[i]
+                    shares_held = 0.0
+                    num_trades += 1
+            equity.append(cash + shares_held * prices[i])
+        if shares_held > 0:
+            cash += shares_held * prices[-1]
+            shares_held = 0.0
+
+    else:  # random
+        shares_held = 0.0
+        for i in range(1, len(prices)):
+            if rng.random() < 0.05 and shares_held == 0 and cash > 0:
+                shares_held = cash * 0.80 / prices[i]
+                cash -= shares_held * prices[i]
+                num_trades += 1
+            elif rng.random() < 0.05 and shares_held > 0:
+                cash += shares_held * prices[i]
+                shares_held = 0.0
+                num_trades += 1
+            equity.append(cash + shares_held * prices[i])
+        if shares_held > 0:
+            cash += shares_held * prices[-1]
+            shares_held = 0.0
+
+    # Trim equity to match n_days
+    if len(equity) > n_days + 1:
+        equity = equity[: n_days + 1]
+    elif len(equity) < n_days + 1:
+        equity.extend([equity[-1]] * (n_days + 1 - len(equity)))
+
+    # ── Metrics ────────────────────────────────────────────────────────────────
+    final_equity = cash + position * prices[-1] if strategy != "buy_and_hold" else equity[-1]
+    # Prefer last equity value as canonical
+    final_equity = equity[-1]
+
+    total_return_pct = round((final_equity - initial_capital) / initial_capital * 100.0, 4)
+    max_dd_pct = _compute_max_drawdown(equity)
+    daily_returns = [
+        (equity[i] - equity[i - 1]) / equity[i - 1] if equity[i - 1] > 0 else 0.0
+        for i in range(1, len(equity))
+    ]
+    sharpe = _compute_sharpe(daily_returns)
+
+    # Downsample equity_curve to at most 365 points for response size
+    step = max(1, len(equity) // 365)
+    equity_curve = [round(v, 2) for v in equity[::step]]
+    if equity_curve[-1] != round(equity[-1], 2):
+        equity_curve.append(round(equity[-1], 2))
+
+    return {
+        "symbol": symbol,
+        "strategy": strategy,
+        "start_date": start_date,
+        "end_date": end_date,
+        "period_days": n_days,
+        "initial_capital": initial_capital,
+        "final_equity": round(final_equity, 2),
+        "total_return_pct": total_return_pct,
+        "max_drawdown_pct": max_dd_pct,
+        "sharpe_ratio": sharpe,
+        "num_trades": num_trades,
+        "equity_curve": equity_curve,
+        "generated_at": time.time(),
+    }
+
+
+# ── Multi-Agent Portfolio v2 (S28) ─────────────────────────────────────────────
+
+# Agent allocation config (total = 100%)
+_AGENT_ALLOCATIONS = {
+    "agent-conservative-001": 0.30,
+    "agent-balanced-002":     0.30,
+    "agent-aggressive-003":   0.25,
+    "agent-momentum-004":     0.15,
+}
+
+# Default agent PnL seeded data
+_DEFAULT_AGENT_PNL = {
+    "agent-conservative-001": 12.40,
+    "agent-balanced-002":     8.15,
+    "agent-aggressive-003":   21.60,
+    "agent-momentum-004":     5.30,
+}
+
+
+def _compute_correlation_matrix(agents: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Compute a pairwise correlation matrix between agent PnL streams.
+    Uses win_rate and pnl_usd as proxy signal vectors.
+    """
+    agent_ids = [a.get("agent_id", a.get("id", "unknown")) for a in agents]
+    n = len(agent_ids)
+    # Build simple feature vector per agent: [win_rate * 10, pnl_usd / 100]
+    signals = []
+    for a in agents:
+        wr = a.get("win_rate", a.get("win_rate_30d", 0.5))
+        pnl = a.get("total_pnl", a.get("pnl_30d_usd", 0.0))
+        rep = a.get("reputation_score", 7.0)
+        signals.append([wr * 10, pnl / max(abs(pnl), 1.0), rep])
+
+    matrix: Dict[str, Dict[str, float]] = {}
+    for i, ai in enumerate(agent_ids):
+        matrix[ai] = {}
+        for j, aj in enumerate(agent_ids):
+            if i == j:
+                matrix[ai][aj] = 1.0
+            else:
+                # Pearson-like correlation from 3-dim feature vectors
+                vi, vj = signals[i], signals[j]
+                mean_i = sum(vi) / len(vi)
+                mean_j = sum(vj) / len(vj)
+                num = sum((vi[k] - mean_i) * (vj[k] - mean_j) for k in range(len(vi)))
+                denom_i = math.sqrt(sum((vi[k] - mean_i) ** 2 for k in range(len(vi))))
+                denom_j = math.sqrt(sum((vj[k] - mean_j) ** 2 for k in range(len(vj))))
+                denom = denom_i * denom_j
+                corr = round(num / denom, 4) if denom > 0 else 0.0
+                matrix[ai][aj] = max(-1.0, min(1.0, corr))
+
+    return matrix
+
+
+def build_portfolio_v2(run_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Build enhanced multi-agent portfolio view for GET /demo/portfolio.
+
+    Returns combined view with:
+      - allocation_pct per agent
+      - current_pnl per agent
+      - correlation_matrix between agents
+      - aggregate portfolio metrics
+    """
+    # Get base profiles
+    if run_result is not None:
+        base = build_portfolio_summary(run_result)
+        agents = base["agent_profiles"]
+    else:
+        agents = list(_DEFAULT_PORTFOLIO.get("agent_profiles", []))
+
+    total_capital = 100_000.0  # reference portfolio capital
+
+    # Enrich with allocation and pnl
+    enriched = []
+    for a in agents:
+        aid = a.get("agent_id", "unknown")
+        alloc = _AGENT_ALLOCATIONS.get(aid, 0.25)
+        pnl = a.get("total_pnl", _DEFAULT_AGENT_PNL.get(aid, 0.0))
+        allocated_usd = round(total_capital * alloc, 2)
+        pnl_pct = round(pnl / allocated_usd * 100.0, 4) if allocated_usd > 0 else 0.0
+        enriched.append({
+            **a,
+            "allocation_pct": round(alloc * 100.0, 2),
+            "allocated_usd": allocated_usd,
+            "current_pnl": round(pnl, 4),
+            "current_pnl_pct": pnl_pct,
+        })
+
+    # Correlation matrix
+    correlation_matrix = _compute_correlation_matrix(enriched)
+
+    # Aggregate portfolio metrics
+    total_pnl = round(sum(a["current_pnl"] for a in enriched), 4)
+    total_allocated = round(sum(a["allocated_usd"] for a in enriched), 2)
+    portfolio_return_pct = round(total_pnl / total_allocated * 100.0, 4) if total_allocated > 0 else 0.0
+
+    # Diversification score: avg off-diagonal correlation (lower = more diverse)
+    n = len(enriched)
+    off_diag_corrs = []
+    for i, ai in enumerate(enriched):
+        for j, aj in enumerate(enriched):
+            if i != j:
+                ai_id = ai.get("agent_id", "unknown")
+                aj_id = aj.get("agent_id", "unknown")
+                off_diag_corrs.append(correlation_matrix.get(ai_id, {}).get(aj_id, 0.0))
+    avg_corr = round(sum(off_diag_corrs) / len(off_diag_corrs), 4) if off_diag_corrs else 0.0
+    diversification_score = round(1.0 - abs(avg_corr), 4)
+
+    # Backward-compat: include old field names so existing tests continue to pass
+    # agent_profiles = agents (without S28 extra fields)
+    agent_profiles_compat = [
+        {k: v for k, v in a.items()
+         if k not in ("allocation_pct", "allocated_usd", "current_pnl_pct")}
+        for a in enriched
+    ]
+
+    # consensus_stats and risk_metrics derived from run_result if available
+    if run_result is not None:
+        base = build_portfolio_summary(run_result)
+        consensus_stats = base.get("consensus_stats", {})
+        risk_metrics = base.get("risk_metrics", {})
+    else:
+        consensus_stats = {"avg_agreement_rate": 0.0, "supermajority_hits": 0, "veto_count": 0}
+        risk_metrics = {"max_drawdown": 0.0, "sharpe_estimate": 0.0, "volatility": 0.02}
+
+    return {
+        "source": "live" if run_result is not None else "default",
+        "total_capital_usd": total_capital,
+        "total_allocated_usd": total_allocated,
+        "total_pnl": total_pnl,
+        "portfolio_return_pct": portfolio_return_pct,
+        "diversification_score": diversification_score,
+        "avg_inter_agent_correlation": avg_corr,
+        "agents": enriched,
+        "agent_profiles": agent_profiles_compat,
+        "correlation_matrix": correlation_matrix,
+        "consensus_stats": consensus_stats,
+        "risk_metrics": risk_metrics,
+        "generated_at": time.time(),
+    }
+
+
+# ── Alert System (S28) ─────────────────────────────────────────────────────────
+
+# Alert configuration state
+_alert_config: Dict[str, Any] = {
+    "drawdown_threshold": 10.0,   # % max drawdown to trigger alert
+    "win_rate_floor": 0.40,       # win_rate below this triggers alert
+    "pnl_floor": -500.0,          # USD PnL below this triggers alert
+    "sharpe_floor": -0.5,         # Sharpe below this triggers alert
+    "enabled": True,
+    "configured_at": None,
+}
+_alert_config_lock = threading.Lock()
+
+# Active alerts list
+_active_alerts: List[Dict[str, Any]] = []
+_active_alerts_lock = threading.Lock()
+
+
+def configure_alerts(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Update alert thresholds from a config dict.
+
+    Accepted keys:
+        drawdown_threshold (float, %)
+        win_rate_floor (float, 0–1)
+        pnl_floor (float, USD)
+        sharpe_floor (float)
+        enabled (bool)
+
+    Returns the updated config.
+    """
+    VALID_KEYS = {"drawdown_threshold", "win_rate_floor", "pnl_floor", "sharpe_floor", "enabled"}
+    unknown = set(config.keys()) - VALID_KEYS
+    if unknown:
+        raise ValueError(f"Unknown config keys: {sorted(unknown)}")
+
+    with _alert_config_lock:
+        if "drawdown_threshold" in config:
+            v = float(config["drawdown_threshold"])
+            if v < 0:
+                raise ValueError("drawdown_threshold must be >= 0")
+            _alert_config["drawdown_threshold"] = v
+        if "win_rate_floor" in config:
+            v = float(config["win_rate_floor"])
+            if not (0.0 <= v <= 1.0):
+                raise ValueError("win_rate_floor must be in [0, 1]")
+            _alert_config["win_rate_floor"] = v
+        if "pnl_floor" in config:
+            _alert_config["pnl_floor"] = float(config["pnl_floor"])
+        if "sharpe_floor" in config:
+            _alert_config["sharpe_floor"] = float(config["sharpe_floor"])
+        if "enabled" in config:
+            _alert_config["enabled"] = bool(config["enabled"])
+        _alert_config["configured_at"] = time.time()
+        return dict(_alert_config)
+
+
+def _check_alerts_from_health() -> List[Dict[str, Any]]:
+    """Check current agent health against alert thresholds. Returns new alerts."""
+    with _alert_config_lock:
+        cfg = dict(_alert_config)
+
+    if not cfg.get("enabled", True):
+        return []
+
+    with _agent_health_lock:
+        health_snapshot = dict(_agent_health)
+
+    new_alerts: List[Dict[str, Any]] = []
+    ts = time.time()
+
+    if not health_snapshot:
+        # Use seeded data from _DEFAULT_AGENT_HEALTH_SEEDED if available
+        return []
+
+    for aid, h in health_snapshot.items():
+        drawdown = h.get("drawdown_pct", 0.0)
+        win_rate = h.get("win_rate_30d", 1.0)
+        pnl = h.get("pnl_30d_usd", 0.0)
+
+        if drawdown > cfg["drawdown_threshold"]:
+            new_alerts.append({
+                "alert_id": f"drawdown-{aid}-{int(ts)}",
+                "type": "drawdown_exceeded",
+                "agent_id": aid,
+                "message": f"Agent {aid} drawdown {drawdown:.1f}% exceeds threshold {cfg['drawdown_threshold']:.1f}%",
+                "severity": "high" if drawdown > cfg["drawdown_threshold"] * 1.5 else "medium",
+                "value": drawdown,
+                "threshold": cfg["drawdown_threshold"],
+                "triggered_at": ts,
+            })
+
+        if win_rate < cfg["win_rate_floor"]:
+            new_alerts.append({
+                "alert_id": f"winrate-{aid}-{int(ts)}",
+                "type": "win_rate_below_floor",
+                "agent_id": aid,
+                "message": f"Agent {aid} win_rate {win_rate:.2%} below floor {cfg['win_rate_floor']:.2%}",
+                "severity": "medium",
+                "value": win_rate,
+                "threshold": cfg["win_rate_floor"],
+                "triggered_at": ts,
+            })
+
+        if pnl < cfg["pnl_floor"]:
+            new_alerts.append({
+                "alert_id": f"pnl-{aid}-{int(ts)}",
+                "type": "pnl_below_floor",
+                "agent_id": aid,
+                "message": f"Agent {aid} PnL ${pnl:.2f} below floor ${cfg['pnl_floor']:.2f}",
+                "severity": "high",
+                "value": pnl,
+                "threshold": cfg["pnl_floor"],
+                "triggered_at": ts,
+            })
+
+    return new_alerts
+
+
+def get_active_alerts() -> Dict[str, Any]:
+    """Return the list of active alerts, refreshing from current health state."""
+    new_alerts = _check_alerts_from_health()
+
+    with _active_alerts_lock:
+        # Deduplicate by type+agent_id (keep latest)
+        existing_keys = {(a["type"], a["agent_id"]) for a in _active_alerts}
+        for alert in new_alerts:
+            key = (alert["type"], alert["agent_id"])
+            if key not in existing_keys:
+                _active_alerts.append(alert)
+                existing_keys.add(key)
+        current = list(_active_alerts)
+
+    with _alert_config_lock:
+        cfg = dict(_alert_config)
+
+    return {
+        "enabled": cfg["enabled"],
+        "config": {
+            "drawdown_threshold": cfg["drawdown_threshold"],
+            "win_rate_floor": cfg["win_rate_floor"],
+            "pnl_floor": cfg["pnl_floor"],
+            "sharpe_floor": cfg["sharpe_floor"],
+        },
+        "alert_count": len(current),
+        "alerts": current,
+        "checked_at": time.time(),
+    }
+
+
+def clear_alerts() -> int:
+    """Clear all active alerts. Returns count cleared."""
+    with _active_alerts_lock:
+        count = len(_active_alerts)
+        _active_alerts.clear()
+    return count
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class _DemoHandler(BaseHTTPRequestHandler):
@@ -1173,6 +1701,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "GET  /demo/position-size": "Kelly/volatility position sizing — ?symbol=BTC/USD&capital=10000&risk_pct=0.02&method=half_kelly",
                     "GET  /demo/health/detailed": "Per-agent health dashboard: last_signal_ts, win_rate_30d, drawdown, health_score",
                     "WS   /demo/ws": f"WebSocket live tick stream (ws://localhost:8085/demo/ws)",
+                    "POST /demo/backtest": "GBM historical backtest — {symbol, strategy, start_date, end_date, initial_capital}",
+                    "POST /demo/alerts/config": "Configure alert thresholds — {drawdown_threshold, win_rate_floor, pnl_floor, sharpe_floor, enabled}",
+                    "GET  /demo/alerts/active": "List active triggered alerts",
                 },
                 "query_params": {
                     "ticks": f"Number of price ticks (default {DEFAULT_TICKS}, max 100)",
@@ -1217,6 +1748,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._handle_position_size(qs)
         elif path in ("/demo/health/detailed",):
             self._handle_health_detailed()
+        elif path in ("/demo/alerts/active",):
+            self._send_json(200, get_active_alerts())
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -1231,6 +1764,10 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._handle_compare()
         elif path in ("/demo/consensus", "/consensus"):
             self._handle_consensus()
+        elif path in ("/demo/backtest",):
+            self._handle_backtest()
+        elif path in ("/demo/alerts/config",):
+            self._handle_alerts_config()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -1350,17 +1887,71 @@ class _DemoHandler(BaseHTTPRequestHandler):
         """Handle GET /demo/health/detailed — per-agent health dashboard."""
         self._send_json(200, build_detailed_health())
 
+    def _handle_backtest(self) -> None:
+        """Handle POST /demo/backtest."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        symbol = body.get("symbol", "BTC/USD")
+        strategy = body.get("strategy", "momentum")
+        start_date = body.get("start_date")
+        end_date = body.get("end_date")
+        initial_capital = body.get("initial_capital", 10000.0)
+
+        if not start_date or not end_date:
+            self._send_json(400, {"error": "start_date and end_date are required"})
+            return
+
+        try:
+            initial_capital = float(initial_capital)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "initial_capital must be a number"})
+            return
+
+        try:
+            result = build_backtest(
+                symbol=symbol,
+                strategy=strategy,
+                start_date=start_date,
+                end_date=end_date,
+                initial_capital=initial_capital,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_alerts_config(self) -> None:
+        """Handle POST /demo/alerts/config."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        try:
+            updated = configure_alerts(body)
+            self._send_json(200, {"status": "ok", "config": updated})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
     def _handle_portfolio(self) -> None:
-        """Handle GET /demo/portfolio."""
+        """Handle GET /demo/portfolio — enhanced multi-agent portfolio view (S28)."""
         with _portfolio_lock:
             last_result = _last_run_result
 
-        if last_result is None:
-            # No run completed yet — return seeded defaults
-            self._send_json(200, _DEFAULT_PORTFOLIO)
-        else:
-            summary = build_portfolio_summary(last_result)
-            self._send_json(200, summary)
+        result = build_portfolio_v2(last_result)
+        self._send_json(200, result)
 
     def _handle_demo_run(self, qs: Dict) -> None:
         """Handle POST /demo/run."""
