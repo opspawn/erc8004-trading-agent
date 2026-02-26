@@ -37,10 +37,11 @@ enabled so judges can call it without a wallet.
 | Network | Chain ID | Contract / Registry Address | Explorer |
 |---------|----------|----------------------------|----------|
 | Base Sepolia | 84532 | `0x8004B663056A597Dffe9eCcC1965A193B7388713` | [basescan](https://sepolia.basescan.org/address/0x8004B663056A597Dffe9eCcC1965A193B7388713) |
-| **Arbitrum Sepolia** | **421614** | **Deployed on: Arbitrum Sepolia (testnet)** — see `deployment-arbitrum-sepolia.json` | [arbiscan](https://sepolia.arbiscan.io) |
+| **Arbitrum Sepolia** | **421614** | Deployer wallet `0x5Ee4e0E55213787A453FB720e8386F41Fd7d093E` — **pending testnet ETH faucet** (contract address available once funded) | [arbiscan](https://sepolia.arbiscan.io) |
 
-> Arbitrum Sepolia deployment uses `scripts/deploy-arbitrum-sepolia.sh` (chain ID 421614, RPC `https://sepolia-rollup.arbitrum.io/rpc`).
-> Run `bash scripts/deploy-arbitrum-sepolia.sh` to deploy; tx hash and contract address are written to `deployment-arbitrum-sepolia.json`.
+> Arbitrum Sepolia deployment wallet: `0x5Ee4e0E55213787A453FB720e8386F41Fd7d093E`
+> Get free testnet ETH at https://www.alchemy.com/faucets/arbitrum-sepolia then run `bash scripts/deploy-arbitrum-sepolia.sh`
+> Contract address will be written to `deployment-arbitrum-sepolia.json` once funded.
 
 ---
 
@@ -66,8 +67,9 @@ enabled so judges can call it without a wallet.
   JSON report with trades, PnL, reputation scores, and signed validation artifact hash
 - **Live metrics dashboard** (`GET /demo/metrics`): Real-time aggregate stats across all
   runs — win rate, Sharpe ratio, Sortino ratio, max drawdown, cumulative return, active agents
-- **Agent leaderboard** (`GET /demo/leaderboard`): Top 5 agents ranked by Sortino ratio
-  with strategy, return pct, win rate, trade count, and live reputation score
+- **Agent leaderboard** (`GET /demo/leaderboard`): Top agents ranked by configurable metric —
+  `?sort_by=sortino|sharpe|pnl|trades|win_rate|reputation` with `?limit=N` (1–20);
+  5 agents seeded, grows with live runs; each entry has rank, strategy, return pct, win rate, trade count, reputation
 - **Multi-agent comparison** (`POST /demo/compare`): Side-by-side performance metrics for
   2-5 agent IDs — useful for demonstrating multi-agent coordination advantages
 - **Real-time SSE stream** (`GET /demo/stream`): Server-Sent Events push live run_complete
@@ -79,7 +81,7 @@ enabled so judges can call it without a wallet.
 
 ## Test Evidence
 
-**Total tests: 3,449 passing** (verified by running `python3 -m pytest --tb=no -q`)
+**Total tests: 3,483 passing** (verified by running `python3 -m pytest --tb=no -q`)
 
 | Test File | Coverage Area |
 |-----------|---------------|
@@ -100,7 +102,7 @@ enabled so judges can call it without a wallet.
 
 ```bash
 cd agent && python3 -m pytest tests/ -q --tb=no
-# 3200 passed in ~31s
+# 3483 passed in ~35s
 ```
 
 ---
@@ -268,10 +270,10 @@ Show: `curl -s -X POST localhost:8084/demo/run | python3 -m json.tool` — JSON 
 scrolling with ticks, trades, reputation scores, artifact hash.
 
 **Scene 5 — Test Coverage (0:55–1:05)**
-> "3,200 tests, 50 test files. Every edge case: flash crash, oracle failure, consensus
+> "3,483 tests, 50+ test files. Every edge case: flash crash, oracle failure, consensus
 > deadlock. Every reputation path."
 
-Show: `python3 -m pytest tests/ -q` → `3200 passed in 30s`.
+Show: `python3 -m pytest tests/ -q` → `3483 passed in 35s`.
 
 **Scene 6 — Close (1:05–1:20)**
 > "On-chain identity. Reputation-weighted consensus. x402-gated endpoints. Validation

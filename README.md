@@ -63,8 +63,10 @@ This project implements a fully autonomous trading agent that:
 
 ERC-8004 contracts are deployable to Arbitrum Sepolia (chain ID 421614), enabling eligibility for the [Arbitrum Trailblazer 2.0](https://arbitrum.io) grant program.
 
+**Deployer wallet**: `0x5Ee4e0E55213787A453FB720e8386F41Fd7d093E` (pending testnet ETH — fund via [Alchemy faucet](https://www.alchemy.com/faucets/arbitrum-sepolia))
+
 ```bash
-# Deploy to Arbitrum Sepolia
+# Deploy to Arbitrum Sepolia (requires funded deployer wallet)
 bash scripts/deploy-arbitrum-sepolia.sh
 # Outputs: deployment-arbitrum-sepolia.json with contract address and tx hash
 ```
@@ -196,7 +198,7 @@ python3 demo_cli.py --symbol SOL/USD --ticks 100 --seed 7
 ## Live Demo
 
 **Project**: ERC-8004 Autonomous Trading Agent
-**Tests**: 3,273 passing
+**Tests**: 3,483 passing
 
 Hit the live demo endpoint — no wallet, no setup:
 

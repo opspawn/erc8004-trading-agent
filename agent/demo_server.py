@@ -150,7 +150,7 @@ _leaderboard_lock = threading.Lock()
 # Keyed by agent_id → accumulated stats
 _agent_cumulative: Dict[str, Dict[str, Any]] = {}
 
-# Seeded leaderboard shown before any run
+# Seeded leaderboard shown before any run (5 agents for submission polish)
 _SEEDED_LEADERBOARD: List[Dict[str, Any]] = [
     {
         "rank": 1,
@@ -184,6 +184,28 @@ _SEEDED_LEADERBOARD: List[Dict[str, Any]] = [
         "win_rate": 0.583,
         "trades_count": 57,
         "reputation_score": 6.91,
+    },
+    {
+        "rank": 4,
+        "agent_id": "agent-momentum-004",
+        "strategy": "momentum",
+        "total_return_pct": 4.47,
+        "sortino_ratio": 1.18,
+        "sharpe_ratio": 0.87,
+        "win_rate": 0.542,
+        "trades_count": 71,
+        "reputation_score": 6.53,
+    },
+    {
+        "rank": 5,
+        "agent_id": "agent-meanrev-005",
+        "strategy": "mean_reversion",
+        "total_return_pct": 1.96,
+        "sortino_ratio": 0.92,
+        "sharpe_ratio": 0.74,
+        "win_rate": 0.60,
+        "trades_count": 40,
+        "reputation_score": 6.18,
     },
 ]
 
@@ -581,13 +603,47 @@ def _update_leaderboard(run_result: Dict[str, Any]) -> None:
             cum["reputation_score"] = rep  # latest rep score
 
 
-def build_leaderboard() -> List[Dict[str, Any]]:
-    """Build top-5 leaderboard ranked by Sortino ratio."""
+LEADERBOARD_SORT_KEYS = {
+    "sortino": "sortino_ratio",
+    "sharpe": "sharpe_ratio",
+    "pnl": "total_return_pct",
+    "trades": "trades_count",
+    "win_rate": "win_rate",
+    "reputation": "reputation_score",
+}
+
+LEADERBOARD_SORT_DEFAULT = "sortino"
+
+
+def build_leaderboard(sort_by: str = LEADERBOARD_SORT_DEFAULT, limit: int = 5) -> List[Dict[str, Any]]:
+    """Build leaderboard ranked by the requested metric.
+
+    Args:
+        sort_by: One of 'sortino' (default), 'sharpe', 'pnl', 'trades',
+                 'win_rate', 'reputation'.
+        limit:   Number of top agents to return (default 5, max 20).
+    """
+    sort_key = LEADERBOARD_SORT_KEYS.get(sort_by, LEADERBOARD_SORT_KEYS[LEADERBOARD_SORT_DEFAULT])
+    limit = max(1, min(int(limit), 20))
+
     with _leaderboard_lock:
         agents = list(_agent_cumulative.values())
 
     if not agents:
-        return list(_SEEDED_LEADERBOARD)
+        # Return seeded leaderboard re-sorted by requested key
+        seeded = list(_SEEDED_LEADERBOARD)
+        seeded.sort(key=lambda x: x.get(sort_key, 0), reverse=True)
+        for i, e in enumerate(seeded[:limit], start=1):
+            e = dict(e)
+            e["rank"] = i
+            e["sort_by"] = sort_by
+        result = []
+        for i, e in enumerate(seeded[:limit], start=1):
+            entry = dict(e)
+            entry["rank"] = i
+            entry["sort_by"] = sort_by
+            result.append(entry)
+        return result
 
     entries = []
     for cum in agents:
@@ -611,14 +667,17 @@ def build_leaderboard() -> List[Dict[str, Any]]:
             "reputation_score": round(cum["reputation_score"], 4),
         })
 
-    # Sort by Sortino descending
-    entries.sort(key=lambda x: x["sortino_ratio"], reverse=True)
+    # Sort by requested key descending
+    entries.sort(key=lambda x: x.get(sort_key, 0), reverse=True)
 
-    # Add rank
-    for i, e in enumerate(entries[:5], start=1):
+    # Add rank and sort_by annotation
+    result = []
+    for i, e in enumerate(entries[:limit], start=1):
         e["rank"] = i
+        e["sort_by"] = sort_by
+        result.append(e)
 
-    return entries[:5]
+    return result
 
 
 def build_compare(agent_ids: List[str]) -> Dict[str, Any]:
@@ -699,6 +758,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
+        qs = parse_qs(parsed.query)
         if path in ("/demo/health", "/health"):
             self._send_json(200, {
                 "status": "ok",
@@ -717,7 +777,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "GET  /demo/info": "This document",
                     "GET  /demo/portfolio": "Portfolio analytics summary of last run",
                     "GET  /demo/metrics": "Real-time aggregate performance metrics",
-                    "GET  /demo/leaderboard": "Top 5 agents by risk-adjusted return (Sortino)",
+                    "GET  /demo/leaderboard": "Top agents ranked by metric — ?sort_by=sortino|sharpe|pnl|trades|win_rate|reputation&limit=N",
                     "POST /demo/compare": "Side-by-side agent comparison {agent_ids:[...]}",
                     "GET  /demo/stream": "Server-Sent Events stream of live run updates",
                 },
@@ -725,6 +785,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "ticks": f"Number of price ticks (default {DEFAULT_TICKS}, max 100)",
                     "seed": "RNG seed for reproducibility (default 42)",
                     "symbol": "Trading symbol (default BTC/USD)",
+                    "sort_by": f"Leaderboard sort metric: {', '.join(LEADERBOARD_SORT_KEYS.keys())} (default: {LEADERBOARD_SORT_DEFAULT})",
+                    "limit": "Leaderboard result count (default 5, max 20)",
                 },
                 "example_curl": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -740,7 +802,22 @@ class _DemoHandler(BaseHTTPRequestHandler):
         elif path in ("/demo/metrics", "/metrics"):
             self._send_json(200, build_metrics_summary())
         elif path in ("/demo/leaderboard", "/leaderboard"):
-            self._send_json(200, {"leaderboard": build_leaderboard()})
+            sort_by = qs.get("sort_by", [LEADERBOARD_SORT_DEFAULT])[0]
+            if sort_by not in LEADERBOARD_SORT_KEYS:
+                self._send_json(400, {
+                    "error": f"Invalid sort_by '{sort_by}'",
+                    "valid_values": list(LEADERBOARD_SORT_KEYS.keys()),
+                })
+                return
+            try:
+                limit = int(qs.get("limit", ["5"])[0])
+            except (ValueError, TypeError):
+                limit = 5
+            self._send_json(200, {
+                "leaderboard": build_leaderboard(sort_by=sort_by, limit=limit),
+                "sort_by": sort_by,
+                "limit": limit,
+            })
         elif path in ("/demo/stream", "/stream"):
             self._handle_sse_stream()
         else:
