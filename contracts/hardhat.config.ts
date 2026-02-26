@@ -7,6 +7,8 @@ dotenv.config();
 const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || "0x" + "0".repeat(64);
 const SEPOLIA_RPC = process.env.SEPOLIA_RPC_URL || "https://rpc.sepolia.org";
 const BASE_SEPOLIA_RPC = process.env.BASE_SEPOLIA_RPC_URL || "https://sepolia.base.org";
+const ARBITRUM_SEPOLIA_RPC = process.env.ARBITRUM_SEPOLIA_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc";
+const ARBISCAN_API_KEY = process.env.ARBISCAN_API_KEY || "";
 const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY || "";
 
 const config: HardhatUserConfig = {
@@ -38,11 +40,18 @@ const config: HardhatUserConfig = {
       chainId: 84532,
       gasPrice: "auto",
     },
+    arbitrumSepolia: {
+      url: ARBITRUM_SEPOLIA_RPC,
+      accounts: [PRIVATE_KEY],
+      chainId: 421614,
+      gasPrice: "auto",
+    },
   },
   etherscan: {
     apiKey: {
       sepolia: ETHERSCAN_API_KEY,
       baseSepolia: ETHERSCAN_API_KEY,
+      arbitrumSepolia: ARBISCAN_API_KEY,
     },
     customChains: [
       {
@@ -51,6 +60,14 @@ const config: HardhatUserConfig = {
         urls: {
           apiURL: "https://api-sepolia.basescan.org/api",
           browserURL: "https://sepolia.basescan.org",
+        },
+      },
+      {
+        network: "arbitrumSepolia",
+        chainId: 421614,
+        urls: {
+          apiURL: "https://api-sepolia.arbiscan.io/api",
+          browserURL: "https://sepolia.arbiscan.io",
         },
       },
     ],

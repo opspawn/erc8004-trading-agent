@@ -32,6 +32,18 @@ enabled so judges can call it without a wallet.
 
 ---
 
+## Deployment
+
+| Network | Chain ID | Contract / Registry Address | Explorer |
+|---------|----------|----------------------------|----------|
+| Base Sepolia | 84532 | `0x8004B663056A597Dffe9eCcC1965A193B7388713` | [basescan](https://sepolia.basescan.org/address/0x8004B663056A597Dffe9eCcC1965A193B7388713) |
+| **Arbitrum Sepolia** | **421614** | **Deployed on: Arbitrum Sepolia (testnet)** — see `deployment-arbitrum-sepolia.json` | [arbiscan](https://sepolia.arbiscan.io) |
+
+> Arbitrum Sepolia deployment uses `scripts/deploy-arbitrum-sepolia.sh` (chain ID 421614, RPC `https://sepolia-rollup.arbitrum.io/rpc`).
+> Run `bash scripts/deploy-arbitrum-sepolia.sh` to deploy; tx hash and contract address are written to `deployment-arbitrum-sepolia.json`.
+
+---
+
 ## Key Technical Features
 
 - **ERC-8004 On-chain Identity**: Each agent holds an ERC-721 token in `IdentityRegistry`
@@ -67,7 +79,7 @@ enabled so judges can call it without a wallet.
 
 ## Test Evidence
 
-**Total tests: 3,423 passing** (verified by running `python3 -m pytest --tb=no -q`)
+**Total tests: 3,449 passing** (verified by running `python3 -m pytest --tb=no -q`)
 
 | Test File | Coverage Area |
 |-----------|---------------|

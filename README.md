@@ -51,18 +51,41 @@ This project implements a fully autonomous trading agent that:
 | `ValidationRegistry.sol` | Trade outcome validation requests |
 | `AgentWallet.sol` | EIP-1271 smart contract wallet |
 
+## Supported Networks
+
+| Network | Chain ID | RPC | Explorer |
+|---------|----------|-----|----------|
+| Ethereum Sepolia | 11155111 | `https://rpc.sepolia.org` | [etherscan](https://sepolia.etherscan.io) |
+| Base Sepolia | 84532 | `https://sepolia.base.org` | [basescan](https://sepolia.basescan.org) |
+| **Arbitrum Sepolia** | **421614** | `https://sepolia-rollup.arbitrum.io/rpc` | [arbiscan](https://sepolia.arbiscan.io) |
+
+### Arbitrum Sepolia Support
+
+ERC-8004 contracts are deployable to Arbitrum Sepolia (chain ID 421614), enabling eligibility for the [Arbitrum Trailblazer 2.0](https://arbitrum.io) grant program.
+
+```bash
+# Deploy to Arbitrum Sepolia
+bash scripts/deploy-arbitrum-sepolia.sh
+# Outputs: deployment-arbitrum-sepolia.json with contract address and tx hash
+```
+
+The Hardhat config (`contracts/hardhat.config.ts`) includes the `arbitrumSepolia` network using the public RPC endpoint `https://sepolia-rollup.arbitrum.io/rpc`. Override with `ARBITRUM_SEPOLIA_RPC_URL` in `.env` for a private RPC.
+
 ## Quickstart
 
 ### Prerequisites
 - Node.js 22+, Python 3.12+
-- MetaMask with Sepolia ETH
+- MetaMask with Sepolia ETH (or Arbitrum Sepolia ETH from the [Alchemy faucet](https://www.alchemy.com/faucets/arbitrum-sepolia))
 
 ### Contracts
 ```bash
 cd contracts
 npm install
 npx hardhat test          # Run tests
-npx hardhat run scripts/deploy.ts --network sepolia  # Deploy
+npx hardhat run scripts/deploy.ts --network sepolia          # Deploy to Sepolia
+npx hardhat run scripts/deploy.ts --network arbitrumSepolia  # Deploy to Arbitrum Sepolia
+# Or use the convenience script:
+bash scripts/deploy-arbitrum-sepolia.sh
 ```
 
 ### Agent
