@@ -1,0 +1,13 @@
+{
+  "agent_id": "demo-agent-c34ed9cc",
+  "session_id": "0b4f1539",
+  "strategy_hash": "0x6cc5a766790ab603708806970da2357a76052d4c2e6e2d5a7eae89a162ec7b95",
+  "trades_count": 17,
+  "win_rate": 0.529412,
+  "avg_pnl_bps": 2.9412,
+  "max_drawdown_bps": 150.0,
+  "risk_violations": 0,
+  "validation_timestamp": "2026-02-26T00:09:39.194592+00:00",
+  "artifact_hash": "0x8c1c7a2009c171909990e10808266481a1d5a30ac7afbdb4d096748994e29fd4",
+  "validator_signature": "a21526bf2ea34237c7c7cc3cf4cb3210d843c8df7922b7bd41f67736593f89f838f318b7cbad7332ba43ebaf7d164080652ac344cc7da2dbcf6bed2be1114f241b"
+}

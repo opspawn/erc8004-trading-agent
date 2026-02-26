@@ -29,6 +29,7 @@ from market_feed import GBMSimulator, PriceTick
 from strategy_engine import StrategyEngine, StrategySignal
 from risk_manager import RiskManager, RiskConfig
 from paper_trader import PaperTrader, PaperTrade
+from hedera_signals import HederaSignalBus, HCSSignal
 
 
 # ─── State & Config ───────────────────────────────────────────────────────────
@@ -51,6 +52,10 @@ class PipelineConfig:
     # Strategy params
     sentiment_score: float = 0.0
     seed: Optional[int] = None
+    # Hedera HCS-10 integration
+    hedera_enabled: bool = False
+    hedera_topic_id: str = "0.0.4753280"
+    hedera_mode: str = "mock"       # "mock" | "real"
 
 
 @dataclass
@@ -128,6 +133,8 @@ class Pipeline:
         self._engine: Optional[StrategyEngine] = None
         self._risk: Optional[RiskManager] = None
         self._trader: Optional[PaperTrader] = None
+        self._hedera_bus: Optional[HederaSignalBus] = None
+        self._hedera_signals_received: List[HCSSignal] = []
 
         # Runtime state
         self._task: Optional[asyncio.Task] = None
@@ -240,6 +247,24 @@ class Pipeline:
         self._total_pnl = 0.0
         self._price_history = {sym: [] for sym in self.config.symbols}
         self._trade_history.clear()
+
+        # Hedera HCS-10 signal bus (optional)
+        if self.config.hedera_enabled:
+            self._hedera_bus = HederaSignalBus(
+                mode=self.config.hedera_mode,
+                topic_id=self.config.hedera_topic_id,
+            )
+            self._hedera_bus.subscribe_signals(
+                self.config.hedera_topic_id,
+                self._on_hedera_signal,
+            )
+            self._hedera_signals_received.clear()
+            logger.info(
+                "Hedera signal bus enabled (mode={}, topic={})",
+                self.config.hedera_mode, self.config.hedera_topic_id,
+            )
+        else:
+            self._hedera_bus = None
 
     async def _run_loop(self) -> None:
         """Main tick loop. Runs until stop event set or error."""
@@ -356,6 +381,30 @@ class Pipeline:
             "Executed {}/{} @ ${:.2f} | pnl={:.4f} | strategy={}",
             symbol, signal.action, price, pnl_usdc, signal.strategy_name,
         )
+
+        # Publish to HCS if Hedera bus is enabled
+        if self._hedera_bus is not None:
+            try:
+                hcs_signal = self._hedera_bus.make_signal(
+                    signal_type=signal.action.upper(),
+                    ticker=symbol,
+                    confidence=signal.confidence,
+                )
+                self._hedera_bus.publish_signal(hcs_signal)
+            except Exception as exc:
+                logger.warning("HCS publish failed for {}/{}: {}", symbol, signal.action, exc)
+
+    def _on_hedera_signal(self, signal: HCSSignal) -> None:
+        """Callback for incoming HCS signals from the bus."""
+        self._hedera_signals_received.append(signal)
+        logger.debug(
+            "Received HCS signal: type={} ticker={} seq={}",
+            signal.signal_type, signal.ticker, signal.sequence_number,
+        )
+
+    def get_hedera_signals(self, limit: int = 50) -> List[HCSSignal]:
+        """Return the last `limit` received HCS signals."""
+        return self._hedera_signals_received[-limit:]
 
     def _on_task_done(self, task: asyncio.Task) -> None:
         """Callback when the background task finishes."""

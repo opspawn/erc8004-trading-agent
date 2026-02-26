@@ -435,7 +435,51 @@ def _parse_args(argv: Optional[list] = None) -> argparse.Namespace:
                         help="Output machine-readable JSON")
     parser.add_argument("--db", type=str, default=":memory:",
                         help="SQLite path (default: :memory:)")
+    parser.add_argument("--trust-loop", action="store_true", dest="trust_loop",
+                        help="Run full on-chain trust loop demo (sim + reputation + artifact)")
     return parser.parse_args(argv)
+
+
+def run_trust_loop(pipeline: "DemoPipeline", result: "DemoResult") -> None:
+    """
+    Execute the full ERC-8004 on-chain trust loop:
+      1. Trade simulation (already completed via pipeline.run())
+      2. Sync trade outcomes to reputation registry (simulation mode)
+      3. Generate validation artifact
+      4. Print: 'Trust loop complete: {n} trades → reputation updated → artifact {id} generated'
+    """
+    from reputation_updater import ReputationUpdater
+    from validation_artifacts import ArtifactGenerator
+    import uuid as _uuid
+
+    n_trades = result.summary.get("trades_executed", 0)
+
+    # Step 2: Reputation update
+    updater = ReputationUpdater(
+        ledger=pipeline.ledger,
+        agent_id=pipeline.agent_id,
+        simulation=True,
+    )
+    sync = updater.sync_pending()
+
+    # Step 3: Validation artifact
+    session_id = str(_uuid.uuid4())[:8]
+    gen = ArtifactGenerator(
+        ledger=pipeline.ledger,
+        agent_id=pipeline.agent_id,
+    )
+    artifact = gen.generate(session_id=session_id)
+
+    # Step 4: Print trust loop summary
+    print(
+        f"Trust loop complete: {n_trades} trades → "
+        f"reputation updated ({sync.synced_count} records, simulation_mode=True) → "
+        f"artifact {artifact.session_id} generated"
+    )
+    if artifact.artifact_path:
+        print(f"  Artifact path:     {artifact.artifact_path}")
+    print(f"  Artifact hash:     {artifact.artifact_hash[:18]}...")
+    print(f"  Validator sig:     {artifact.validator_signature[:18]}...")
 
 
 def main(argv: Optional[list] = None) -> DemoResult:
@@ -453,6 +497,10 @@ def main(argv: Optional[list] = None) -> DemoResult:
         print(result.to_json())
     else:
         print(result.trace)
+
+    if args.trust_loop:
+        run_trust_loop(pipeline, result)
+
     return result
 
 
