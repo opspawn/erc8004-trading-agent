@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import collections
 import hashlib
 import json
@@ -36,6 +37,7 @@ import math
 import os
 import queue
 import random
+import struct
 import sys
 import time
 import threading
@@ -235,6 +237,57 @@ def _sse_broadcast(event_data: Dict[str, Any]) -> None:
                 dead.append(q)
         for q in dead:
             _sse_clients.remove(q)
+
+
+# ── S33: WebSocket Infrastructure ─────────────────────────────────────────────
+
+_ws_clients_lock = threading.Lock()
+_ws_clients: List[queue.Queue] = []
+
+
+def _ws_accept_key(key: str) -> str:
+    """Compute Sec-WebSocket-Accept from client's Sec-WebSocket-Key."""
+    magic = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+    sha1 = hashlib.sha1((key + magic).encode("utf-8")).digest()
+    return base64.b64encode(sha1).decode("utf-8")
+
+
+def _ws_send_text(wfile, text: str) -> None:
+    """Send a single WebSocket text frame (opcode 0x01, FIN=1, unmasked)."""
+    data = text.encode("utf-8")
+    length = len(data)
+    frame = bytearray()
+    frame.append(0x81)  # FIN=1, opcode=1 (text)
+    if length < 126:
+        frame.append(length)
+    elif length < 65536:
+        frame.append(126)
+        frame.extend(struct.pack(">H", length))
+    else:
+        frame.append(127)
+        frame.extend(struct.pack(">Q", length))
+    frame.extend(data)
+    wfile.write(bytes(frame))
+    wfile.flush()
+
+
+def _ws_send_ping(wfile) -> None:
+    """Send a WebSocket ping frame."""
+    wfile.write(b"\x89\x00")  # FIN=1, opcode=9 (ping), length=0
+    wfile.flush()
+
+
+def _ws_broadcast(payload: str) -> None:
+    """Broadcast a JSON payload string to all active WebSocket subscribers."""
+    with _ws_clients_lock:
+        dead = []
+        for q in _ws_clients:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _ws_clients.remove(q)
 
 
 # ── x402 Payment Gate ─────────────────────────────────────────────────────────
@@ -2838,6 +2891,10 @@ _LIVE_FEED_LOCK = threading.Lock()
 _LIVE_FEED_BUFFER: collections.deque = collections.deque(maxlen=200)
 _LIVE_FEED_SEQ: int = 0
 
+# S33: Per-agent event history for GET /demo/agents/{id}/history
+_AGENT_HISTORY_LOCK = threading.Lock()
+_AGENT_HISTORY: Dict[str, collections.deque] = {}
+
 _FEED_AGENT_IDS = [
     "agent-conservative-001",
     "agent-balanced-002",
@@ -2911,9 +2968,18 @@ def _seed_feed_buffer() -> None:
 
 
 def _push_feed_event(evt: Dict[str, Any]) -> None:
-    """Add event to the live feed buffer."""
+    """Add event to the live feed buffer, per-agent history, and broadcast to WS clients."""
     with _LIVE_FEED_LOCK:
         _LIVE_FEED_BUFFER.append(evt)
+    # Store in per-agent history for /demo/agents/{id}/history
+    agent_id = evt.get("agent_id")
+    if agent_id:
+        with _AGENT_HISTORY_LOCK:
+            if agent_id not in _AGENT_HISTORY:
+                _AGENT_HISTORY[agent_id] = collections.deque(maxlen=500)
+            _AGENT_HISTORY[agent_id].append(evt)
+    # Broadcast to WebSocket subscribers
+    _ws_broadcast(json.dumps(evt, default=str))
 
 
 def get_live_feed(last: int = 10) -> Dict[str, Any]:
@@ -2927,6 +2993,185 @@ def get_live_feed(last: int = 10) -> Dict[str, Any]:
         "count": len(recent),
         "total_buffered": len(events),
         "feed_seq": _LIVE_FEED_SEQ,
+        "generated_at": time.time(),
+    }
+
+
+# ── S33: Agent History ─────────────────────────────────────────────────────────
+
+def get_agent_history(agent_id: str, page: int = 1, limit: int = 20) -> Dict[str, Any]:
+    """
+    Return paginated trade/vote history for a specific agent.
+    Falls back to generating synthetic history from the feed buffer if agent not found.
+    """
+    page = max(1, int(page))
+    limit = max(1, min(int(limit), 100))
+
+    with _AGENT_HISTORY_LOCK:
+        history_deque = _AGENT_HISTORY.get(agent_id)
+        if history_deque is not None:
+            all_events = list(history_deque)
+        else:
+            all_events = None
+
+    if all_events is None:
+        # Fallback: filter from live feed buffer
+        with _LIVE_FEED_LOCK:
+            all_events = [e for e in _LIVE_FEED_BUFFER if e.get("agent_id") == agent_id]
+
+    # Reverse so most-recent first
+    all_events = list(reversed(all_events))
+    total = len(all_events)
+    total_pages = max(1, math.ceil(total / limit))
+    start = (page - 1) * limit
+    end = start + limit
+    page_events = all_events[start:end]
+
+    return {
+        "agent_id": agent_id,
+        "history": page_events,
+        "page": page,
+        "limit": limit,
+        "total_events": total,
+        "total_pages": total_pages,
+        "has_next": page < total_pages,
+        "has_prev": page > 1,
+        "generated_at": time.time(),
+    }
+
+
+# ── S33: Cross-Agent Coordination ─────────────────────────────────────────────
+
+_COORD_STRATEGIES = {"consensus", "independent", "hierarchical"}
+
+
+def coordinate_agents(
+    agent_ids: List[str],
+    strategy: str,
+    market_conditions: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Coordinate multiple agents and return a unified decision with vote tallies,
+    strategy rationale, and confidence scores.
+
+    Strategies:
+      consensus     — majority vote wins; quorum = 51%
+      independent   — each agent acts autonomously; results aggregated
+      hierarchical  — agents ranked by reputation; top agent's decision carries 50% weight
+    """
+    if strategy not in _COORD_STRATEGIES:
+        raise ValueError(f"strategy must be one of {sorted(_COORD_STRATEGIES)}")
+    if not agent_ids:
+        raise ValueError("agent_ids must not be empty")
+    if len(agent_ids) > 10:
+        raise ValueError("agent_ids must contain at most 10 agents")
+
+    # Deterministic-ish seed from agent IDs + time bucket (1-minute buckets)
+    seed_str = ":".join(sorted(agent_ids)) + str(int(time.time()) // 60)
+    seed_val = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    symbol = market_conditions.get("symbol", "BTC/USD")
+    volatility = float(market_conditions.get("volatility", 0.02))
+    trend = str(market_conditions.get("trend", "neutral")).lower()
+
+    # Per-agent votes
+    actions = ["BUY", "SELL", "HOLD"]
+    # Weight actions based on trend
+    if trend in ("bullish", "up"):
+        weights = [0.55, 0.15, 0.30]
+    elif trend in ("bearish", "down"):
+        weights = [0.15, 0.55, 0.30]
+    else:
+        weights = [0.33, 0.33, 0.34]
+
+    agent_votes = []
+    vote_tally: Dict[str, int] = {"BUY": 0, "SELL": 0, "HOLD": 0}
+
+    for i, ag_id in enumerate(agent_ids):
+        h = int(hashlib.md5(f"{seed_val}:{ag_id}:{i}".encode()).hexdigest()[:8], 16)
+        local_rng = random.Random(h)
+        action = local_rng.choices(actions, weights=weights, k=1)[0]
+        confidence = round(0.50 + (h % 4500) / 10000.0, 4)
+        # Adjust confidence based on volatility
+        confidence = round(confidence * max(0.5, 1.0 - volatility), 4)
+        rep_score = round(5.0 + (h % 40) / 10.0, 2)
+        vote_tally[action] += 1
+        agent_votes.append({
+            "agent_id": ag_id,
+            "vote": action,
+            "confidence": confidence,
+            "reputation_score": rep_score,
+        })
+
+    total_votes = len(agent_ids)
+
+    # Determine final decision by strategy
+    if strategy == "consensus":
+        # Majority wins; need > 50%
+        winner = max(vote_tally, key=lambda k: vote_tally[k])
+        winner_votes = vote_tally[winner]
+        quorum_reached = winner_votes / total_votes > 0.5
+        avg_conf = round(sum(v["confidence"] for v in agent_votes) / total_votes, 4)
+        decision = winner if quorum_reached else "HOLD"
+        rationale = (
+            f"Consensus strategy: {winner_votes}/{total_votes} agents voted {winner}. "
+            + ("Quorum reached." if quorum_reached else "No quorum — defaulting to HOLD.")
+        )
+        confidence_score = avg_conf if quorum_reached else round(avg_conf * 0.6, 4)
+
+    elif strategy == "independent":
+        # Each acts independently; report all decisions
+        decision = max(vote_tally, key=lambda k: vote_tally[k])
+        rationale = (
+            f"Independent strategy: agents act autonomously. "
+            f"Aggregate tally — BUY: {vote_tally['BUY']}, SELL: {vote_tally['SELL']}, "
+            f"HOLD: {vote_tally['HOLD']}."
+        )
+        avg_conf = round(sum(v["confidence"] for v in agent_votes) / total_votes, 4)
+        confidence_score = avg_conf
+        quorum_reached = True  # always in independent mode
+
+    else:  # hierarchical
+        # Top agent by reputation_score carries 50% weight
+        top_agent = max(agent_votes, key=lambda v: v["reputation_score"])
+        top_vote = top_agent["vote"]
+        # The remaining votes form the other 50%
+        others = [v for v in agent_votes if v["agent_id"] != top_agent["agent_id"]]
+        other_tally: Dict[str, int] = {"BUY": 0, "SELL": 0, "HOLD": 0}
+        for v in others:
+            other_tally[v["vote"]] += 1
+        peer_winner = max(other_tally, key=lambda k: other_tally[k]) if others else top_vote
+        # Weight: top agent = 0.5, peers = 0.5
+        combined: Dict[str, float] = {a: 0.0 for a in actions}
+        combined[top_vote] += 0.5
+        peer_total = len(others) if others else 1
+        for act in actions:
+            combined[act] += 0.5 * (other_tally[act] / peer_total)
+        decision = max(combined, key=lambda k: combined[k])
+        rationale = (
+            f"Hierarchical strategy: top agent {top_agent['agent_id']} "
+            f"(rep={top_agent['reputation_score']}) voted {top_vote}, "
+            f"peers favored {peer_winner}. Weighted decision: {decision}."
+        )
+        confidence_score = round(
+            0.5 * top_agent["confidence"]
+            + 0.5 * (sum(v["confidence"] for v in others) / peer_total if others else top_agent["confidence"]),
+            4,
+        )
+        quorum_reached = True
+
+    return {
+        "strategy": strategy,
+        "symbol": symbol,
+        "decision": decision,
+        "confidence_score": confidence_score,
+        "quorum_reached": quorum_reached,
+        "vote_tally": vote_tally,
+        "agent_votes": agent_votes,
+        "rationale": rationale,
+        "market_conditions": market_conditions,
+        "total_agents": total_votes,
         "generated_at": time.time(),
     }
 
@@ -3399,7 +3644,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "GET  /demo/stream": "Server-Sent Events stream of live run updates",
                     "GET  /demo/position-size": "Kelly/volatility position sizing — ?symbol=BTC/USD&capital=10000&risk_pct=0.02&method=half_kelly",
                     "GET  /demo/health/detailed": "Per-agent health dashboard: last_signal_ts, win_rate_30d, drawdown, health_score",
-                    "WS   /demo/ws": f"WebSocket live tick stream (ws://localhost:8085/demo/ws)",
+                    "WS   /demo/ws/feed": "WebSocket live event feed (agent_vote, consensus_reached, trade_executed, reputation_updated)",
+                    "POST /demo/agents/coordinate": "Cross-agent coordination {agent_ids, strategy, market_conditions}",
+                    "GET  /demo/agents/{id}/history": "Paginated event history for an agent (?page=1&limit=20)",
                     "POST /demo/backtest": "GBM historical backtest — {symbol, strategy, start_date, end_date, initial_capital}",
                     "POST /demo/alerts/config": "Configure alert thresholds — {drawdown_threshold, win_rate_floor, pnl_floor, sharpe_floor, enabled}",
                     "GET  /demo/alerts/active": "List active triggered alerts",
@@ -3508,6 +3755,25 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S32: Demo status
         elif path in ("/demo/status",):
             self._send_json(200, get_demo_status())
+        # S33: WebSocket live feed
+        elif path in ("/demo/ws/feed",):
+            upgrade = self.headers.get("Upgrade", "").lower()
+            if upgrade == "websocket":
+                self._handle_ws_feed()
+            else:
+                self._send_json(426, {
+                    "error": "Upgrade Required",
+                    "hint": "Connect with a WebSocket client to ws://host/demo/ws/feed",
+                })
+        # S33: Agent history (path pattern /demo/agents/{id}/history)
+        elif path.startswith("/demo/agents/") and path.endswith("/history"):
+            parts = path.split("/")
+            # Expected: ['', 'demo', 'agents', '{agent_id}', 'history']
+            if len(parts) == 5 and parts[4] == "history" and parts[3]:
+                agent_id = parts[3]
+                self._handle_agent_history(agent_id, qs)
+            else:
+                self._send_json(404, {"error": f"Not found: {path}"})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -3542,6 +3808,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S32: Scenario Orchestrator
         elif path in ("/demo/scenario/run",):
             self._handle_scenario_run()
+        # S33: Cross-agent coordination
+        elif path in ("/demo/agents/coordinate",):
+            self._handle_coordinate()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -3881,6 +4150,107 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._send_json(200, result)
         except Exception as exc:
             self._send_json(500, {"error": str(exc)})
+
+    def _handle_ws_feed(self) -> None:
+        """Handle WebSocket upgrade for GET /demo/ws/feed."""
+        ws_key = self.headers.get("Sec-WebSocket-Key", "").strip()
+        if not ws_key:
+            self._send_json(400, {"error": "Missing Sec-WebSocket-Key header"})
+            return
+
+        accept_key = _ws_accept_key(ws_key)
+
+        # Send 101 Switching Protocols
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept_key)
+        self.end_headers()
+
+        # Register this client
+        client_q: queue.Queue = queue.Queue(maxsize=200)
+        with _ws_clients_lock:
+            _ws_clients.append(client_q)
+
+        try:
+            # Send connected welcome frame
+            welcome = json.dumps({
+                "event": "connected",
+                "message": "ERC-8004 WS live feed active",
+                "events": _FEED_EVENT_TYPES,
+                "timestamp": time.time(),
+            }, default=str)
+            _ws_send_text(self.wfile, welcome)
+
+            # Stream events until client disconnects
+            while True:
+                try:
+                    payload = client_q.get(timeout=10)
+                    _ws_send_text(self.wfile, payload)
+                except queue.Empty:
+                    # Send ping to keep the connection alive
+                    _ws_send_ping(self.wfile)
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with _ws_clients_lock:
+                if client_q in _ws_clients:
+                    _ws_clients.remove(client_q)
+
+    def _handle_coordinate(self) -> None:
+        """Handle POST /demo/agents/coordinate — cross-agent coordination decision."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_ids = body.get("agent_ids", [])
+        if not isinstance(agent_ids, list) or not agent_ids:
+            self._send_json(400, {"error": "agent_ids must be a non-empty list"})
+            return
+
+        strategy = body.get("strategy", "consensus")
+        if strategy not in _COORD_STRATEGIES:
+            self._send_json(400, {
+                "error": f"strategy must be one of {sorted(_COORD_STRATEGIES)}",
+                "valid_strategies": sorted(_COORD_STRATEGIES),
+            })
+            return
+
+        market_conditions = body.get("market_conditions", {})
+        if not isinstance(market_conditions, dict):
+            self._send_json(400, {"error": "market_conditions must be an object"})
+            return
+
+        try:
+            result = coordinate_agents(
+                agent_ids=agent_ids,
+                strategy=strategy,
+                market_conditions=market_conditions,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc)})
+
+    def _handle_agent_history(self, agent_id: str, qs: Dict[str, Any]) -> None:
+        """Handle GET /demo/agents/{agent_id}/history — paginated agent event history."""
+        try:
+            page = int(qs.get("page", ["1"])[0])
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            limit = int(qs.get("limit", ["20"])[0])
+        except (ValueError, TypeError):
+            limit = 20
+
+        result = get_agent_history(agent_id=agent_id, page=page, limit=limit)
+        self._send_json(200, result)
 
     def _handle_demo_run(self, qs: Dict) -> None:
         """Handle POST /demo/run."""
