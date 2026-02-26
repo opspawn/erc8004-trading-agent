@@ -401,9 +401,10 @@ def run_demo_pipeline(
     with _portfolio_lock:
         _last_run_result = result
 
-    # ── Update live metrics & leaderboard ─────────────────────────────────────
+    # ── Update live metrics & leaderboard & agent health ──────────────────────
     _update_metrics(result)
     _update_leaderboard(result)
+    _update_agent_health(result)
 
     # ── Broadcast SSE event ───────────────────────────────────────────────────
     _sse_broadcast({
@@ -830,6 +831,288 @@ def build_compare(agent_ids: List[str]) -> Dict[str, Any]:
     }
 
 
+# ── Position Sizing ───────────────────────────────────────────────────────────
+
+# Volatility table (annualised %) — seeded defaults for demo
+_SYMBOL_VOLATILITY: Dict[str, float] = {
+    "BTC/USD": 0.65,
+    "ETH/USD": 0.80,
+    "SOL/USD": 1.10,
+    "AVAX/USD": 0.95,
+    "default": 0.75,
+}
+
+# Trading days per year
+_TRADING_DAYS = 252
+
+
+def _kelly_fraction(win_prob: float, avg_win: float, avg_loss: float) -> float:
+    """
+    Full Kelly criterion: f* = (p*b - q) / b
+    where b = avg_win/avg_loss, p = win_prob, q = 1-p.
+
+    Returns fraction clamped to [0, 1].
+    """
+    if avg_loss <= 0 or win_prob <= 0:
+        return 0.0
+    b = avg_win / avg_loss
+    q = 1.0 - win_prob
+    f = (win_prob * b - q) / b
+    return max(0.0, min(1.0, f))
+
+
+def build_position_size(
+    symbol: str,
+    capital: float,
+    risk_pct: float,
+    win_prob: float = 0.55,
+    avg_win: float = 1.8,
+    avg_loss: float = 1.0,
+    method: str = "kelly",
+) -> Dict[str, Any]:
+    """
+    Calculate recommended position size for a given symbol.
+
+    Methods:
+        kelly          — Full Kelly criterion (aggressive)
+        half_kelly     — Half Kelly (recommended for live trading)
+        quarter_kelly  — Quarter Kelly (conservative)
+        volatility     — Volatility-adjusted (risk_pct of capital per daily sigma)
+        fixed_pct      — Fixed percentage of capital (= risk_pct)
+
+    Args:
+        symbol:    Trading symbol (e.g. "BTC/USD")
+        capital:   Total available capital in USD
+        risk_pct:  Fraction of capital to risk per trade (0.0–1.0)
+        win_prob:  Historical win probability (default 0.55)
+        avg_win:   Average win multiple (e.g. 1.8 = 1.8× avg_loss)
+        avg_loss:  Average loss multiple (e.g. 1.0 = 1× risked amount)
+        method:    One of kelly|half_kelly|quarter_kelly|volatility|fixed_pct
+
+    Returns:
+        dict with recommended_size_usd, recommended_size_pct, method, inputs, warnings
+    """
+    VALID_METHODS = {"kelly", "half_kelly", "quarter_kelly", "volatility", "fixed_pct"}
+    if method not in VALID_METHODS:
+        raise ValueError(f"Unknown method '{method}'. Valid: {sorted(VALID_METHODS)}")
+    if capital <= 0:
+        raise ValueError("capital must be positive")
+    if not (0.0 < risk_pct <= 1.0):
+        raise ValueError("risk_pct must be in (0, 1]")
+    if win_prob < 0 or win_prob > 1:
+        raise ValueError("win_prob must be in [0, 1]")
+
+    warnings: List[str] = []
+    annual_vol = _SYMBOL_VOLATILITY.get(symbol, _SYMBOL_VOLATILITY["default"])
+    daily_vol = annual_vol / math.sqrt(_TRADING_DAYS)
+
+    f_full = _kelly_fraction(win_prob, avg_win, avg_loss)
+
+    if method == "kelly":
+        fraction = f_full
+        description = "Full Kelly — maximises geometric growth rate"
+    elif method == "half_kelly":
+        fraction = f_full / 2.0
+        description = "Half Kelly — reduces variance while preserving ~75% of growth rate"
+    elif method == "quarter_kelly":
+        fraction = f_full / 4.0
+        description = "Quarter Kelly — conservative; preferred for high-vol assets"
+    elif method == "volatility":
+        # Risk budget per trade = capital * risk_pct
+        # Position size such that 1-sigma daily move = that budget
+        # size = (capital * risk_pct) / daily_vol
+        fraction = risk_pct / daily_vol if daily_vol > 0 else risk_pct
+        fraction = min(fraction, 1.0)  # cap at full capital
+        description = "Volatility-adjusted — position sized so 1σ daily move = risk_pct of capital"
+    else:  # fixed_pct
+        fraction = risk_pct
+        description = "Fixed percentage of capital"
+
+    if fraction > 0.25:
+        warnings.append(
+            f"Recommended fraction {fraction:.1%} is aggressive. "
+            "Consider half_kelly or quarter_kelly for live trading."
+        )
+    if win_prob < 0.5 and method in ("kelly", "half_kelly"):
+        warnings.append("Win probability < 50% — Kelly fraction may be near zero.")
+
+    recommended_usd = round(capital * fraction, 2)
+    recommended_pct = round(fraction * 100, 4)
+
+    return {
+        "symbol": symbol,
+        "method": method,
+        "description": description,
+        "recommended_size_usd": recommended_usd,
+        "recommended_size_pct": recommended_pct,
+        "fraction": round(fraction, 6),
+        "kelly_full_fraction": round(f_full, 6),
+        "inputs": {
+            "capital_usd": capital,
+            "risk_pct": risk_pct,
+            "win_prob": win_prob,
+            "avg_win_multiple": avg_win,
+            "avg_loss_multiple": avg_loss,
+            "annual_vol": annual_vol,
+            "daily_vol": round(daily_vol, 6),
+        },
+        "warnings": warnings,
+        "generated_at": time.time(),
+    }
+
+
+# ── Agent Health Dashboard ─────────────────────────────────────────────────────
+
+# Per-agent health state accumulator (updated on every /demo/run call)
+_agent_health: Dict[str, Dict[str, Any]] = {}
+_agent_health_lock = threading.Lock()
+
+# Seeded health data so the endpoint works before any run
+_SEEDED_AGENT_HEALTH: List[Dict[str, Any]] = [
+    {
+        "agent_id": "momentum_alpha",
+        "strategy": "momentum",
+        "status": "active",
+        "last_signal_ts": time.time() - 12.4,
+        "win_rate_30d": 0.612,
+        "current_position": {"symbol": "BTC/USD", "side": "LONG", "qty": 0.15, "entry_price": 43200.0},
+        "drawdown_pct": -2.31,
+        "max_drawdown_30d_pct": -7.84,
+        "trades_30d": 42,
+        "pnl_30d_usd": 384.50,
+        "reputation_score": 0.87,
+        "health_score": 0.91,
+    },
+    {
+        "agent_id": "mean_revert_beta",
+        "strategy": "mean_reversion",
+        "status": "active",
+        "last_signal_ts": time.time() - 28.7,
+        "win_rate_30d": 0.583,
+        "current_position": {"symbol": "ETH/USD", "side": "SHORT", "qty": 1.2, "entry_price": 2315.0},
+        "drawdown_pct": -0.87,
+        "max_drawdown_30d_pct": -5.12,
+        "trades_30d": 38,
+        "pnl_30d_usd": 217.80,
+        "reputation_score": 0.79,
+        "health_score": 0.88,
+    },
+    {
+        "agent_id": "ensemble_gamma",
+        "strategy": "ensemble",
+        "status": "active",
+        "last_signal_ts": time.time() - 5.1,
+        "win_rate_30d": 0.641,
+        "current_position": None,
+        "drawdown_pct": 0.0,
+        "max_drawdown_30d_pct": -4.33,
+        "trades_30d": 55,
+        "pnl_30d_usd": 512.40,
+        "reputation_score": 0.92,
+        "health_score": 0.96,
+    },
+    {
+        "agent_id": "arb_delta",
+        "strategy": "arbitrage",
+        "status": "active",
+        "last_signal_ts": time.time() - 3.2,
+        "win_rate_30d": 0.705,
+        "current_position": {"symbol": "SOL/USD", "side": "LONG", "qty": 8.0, "entry_price": 97.4},
+        "drawdown_pct": -1.15,
+        "max_drawdown_30d_pct": -3.62,
+        "trades_30d": 71,
+        "pnl_30d_usd": 698.20,
+        "reputation_score": 0.95,
+        "health_score": 0.97,
+    },
+]
+
+
+def _compute_health_score(win_rate: float, drawdown_pct: float, trades: int) -> float:
+    """Composite health score in [0, 1]."""
+    wr_score = max(0.0, min(1.0, win_rate))
+    dd_score = max(0.0, 1.0 + drawdown_pct / 20.0)  # 0% dd → 1.0, -20% dd → 0.0
+    activity_score = min(1.0, trades / 30.0)         # 30+ trades → 1.0
+    return round(0.5 * wr_score + 0.3 * dd_score + 0.2 * activity_score, 4)
+
+
+def build_detailed_health() -> Dict[str, Any]:
+    """
+    Build per-agent health dashboard for GET /demo/health/detailed.
+
+    Returns per-agent metrics: last_signal_ts, win_rate_30d, current_position,
+    drawdown, health_score, status.
+    """
+    with _agent_health_lock:
+        live_health = dict(_agent_health)
+
+    if not live_health:
+        # Return refreshed seeded data (update timestamps)
+        agents_out = []
+        for entry in _SEEDED_AGENT_HEALTH:
+            a = dict(entry)
+            a["last_signal_ts"] = round(time.time() - abs(hash(a["agent_id"])) % 60, 3)
+            agents_out.append(a)
+    else:
+        agents_out = list(live_health.values())
+
+    # Sort by health_score descending
+    agents_out.sort(key=lambda x: x.get("health_score", 0), reverse=True)
+
+    total_agents = len(agents_out)
+    active_agents = sum(1 for a in agents_out if a.get("status") == "active")
+    avg_health = round(
+        sum(a.get("health_score", 0) for a in agents_out) / total_agents, 4
+    ) if total_agents > 0 else 0.0
+
+    system_status = "healthy" if avg_health >= 0.8 else ("degraded" if avg_health >= 0.5 else "critical")
+
+    return {
+        "system_status": system_status,
+        "total_agents": total_agents,
+        "active_agents": active_agents,
+        "avg_health_score": avg_health,
+        "agents": agents_out,
+        "generated_at": time.time(),
+    }
+
+
+def _update_agent_health(run_result: Dict[str, Any]) -> None:
+    """Update per-agent health state from a run result (called after each /demo/run)."""
+    agents = run_result.get("agents", [])
+    with _agent_health_lock:
+        for a in agents:
+            aid = a.get("id", "unknown")
+            win_rate = a.get("win_rate", 0.0)
+            trades = a.get("trades", 0)
+            pnl = a.get("pnl_usd", 0.0)
+            drawdown = a.get("max_drawdown", 0.0)
+            rep = a.get("reputation_end", 0.0)
+
+            existing = _agent_health.get(aid, {})
+            # Accumulate 30d window
+            trades_30d = existing.get("trades_30d", 0) + trades
+            pnl_30d = existing.get("pnl_30d_usd", 0.0) + pnl
+
+            health_score = _compute_health_score(win_rate, drawdown * 100, trades_30d)
+            _agent_health[aid] = {
+                "agent_id": aid,
+                "strategy": a.get("profile", "unknown"),
+                "status": "active",
+                "last_signal_ts": round(time.time(), 3),
+                "win_rate_30d": round(win_rate, 4),
+                "current_position": a.get("current_position"),
+                "drawdown_pct": round(drawdown * 100, 4),
+                "max_drawdown_30d_pct": round(
+                    min(existing.get("max_drawdown_30d_pct", 0.0), drawdown * 100), 4
+                ),
+                "trades_30d": trades_30d,
+                "pnl_30d_usd": round(pnl_30d, 2),
+                "reputation_score": round(rep, 4),
+                "health_score": health_score,
+            }
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class _DemoHandler(BaseHTTPRequestHandler):
@@ -887,6 +1170,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "POST /demo/compare": "Side-by-side agent comparison {agent_ids:[...]}",
                     "POST /demo/consensus": "Multi-agent consensus {symbol, signals:[{agent_id,action,confidence}]}",
                     "GET  /demo/stream": "Server-Sent Events stream of live run updates",
+                    "GET  /demo/position-size": "Kelly/volatility position sizing — ?symbol=BTC/USD&capital=10000&risk_pct=0.02&method=half_kelly",
+                    "GET  /demo/health/detailed": "Per-agent health dashboard: last_signal_ts, win_rate_30d, drawdown, health_score",
+                    "WS   /demo/ws": f"WebSocket live tick stream (ws://localhost:8085/demo/ws)",
                 },
                 "query_params": {
                     "ticks": f"Number of price ticks (default {DEFAULT_TICKS}, max 100)",
@@ -927,6 +1213,10 @@ class _DemoHandler(BaseHTTPRequestHandler):
             })
         elif path in ("/demo/stream", "/stream"):
             self._handle_sse_stream()
+        elif path in ("/demo/position-size", "/demo/position_size"):
+            self._handle_position_size(qs)
+        elif path in ("/demo/health/detailed",):
+            self._handle_health_detailed()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -1025,6 +1315,40 @@ class _DemoHandler(BaseHTTPRequestHandler):
             with _sse_clients_lock:
                 if client_q in _sse_clients:
                     _sse_clients.remove(client_q)
+
+    def _handle_position_size(self, qs: Dict[str, Any]) -> None:
+        """Handle GET /demo/position-size — Kelly/volatility position sizing."""
+        def _float(key: str, default: float) -> float:
+            try:
+                return float(qs.get(key, [str(default)])[0])
+            except (TypeError, ValueError):
+                return default
+
+        symbol = qs.get("symbol", ["BTC/USD"])[0]
+        capital = _float("capital", 10000.0)
+        risk_pct = _float("risk_pct", 0.02)
+        win_prob = _float("win_prob", 0.55)
+        avg_win = _float("avg_win", 1.8)
+        avg_loss = _float("avg_loss", 1.0)
+        method = qs.get("method", ["half_kelly"])[0]
+
+        try:
+            result = build_position_size(
+                symbol=symbol,
+                capital=capital,
+                risk_pct=risk_pct,
+                win_prob=win_prob,
+                avg_win=avg_win,
+                avg_loss=avg_loss,
+                method=method,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_health_detailed(self) -> None:
+        """Handle GET /demo/health/detailed — per-agent health dashboard."""
+        self._send_json(200, build_detailed_health())
 
     def _handle_portfolio(self) -> None:
         """Handle GET /demo/portfolio."""
