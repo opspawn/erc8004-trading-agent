@@ -170,6 +170,80 @@ python3 demo_cli.py --symbol SOL/USD --ticks 100 --seed 7
 
 ---
 
+## Live Demo
+
+**Project**: ERC-8004 Autonomous Trading Agent
+**Tests**: 3,273 passing
+
+Hit the live demo endpoint — no wallet, no setup:
+
+```bash
+curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' | python3 -m json.tool
+```
+
+**Start the demo server:**
+```bash
+cd agent
+python3 demo_server.py
+# or via systemd:
+# sudo systemctl start erc8004-demo
+```
+
+**Key features:**
+- **On-chain trust loop** — each agent holds an ERC-8004 identity; every trade updates reputation on-chain
+- **x402 payment gate** — endpoint is micropayment-gated; `dev_mode=true` for judges
+- **Multi-agent consensus** — 3 specialist agents vote; 2/3 reputation-weighted majority required
+- **Backtester** — historical strategy comparison with Sharpe, drawdown, win rate
+- **Stress tester** — 7 adversarial scenarios (flash crash, oracle failure, consensus deadlock)
+- **Validation artifact** — signed JSON proof of session performance, stored on disk
+
+**Response includes:**
+```json
+{
+  "demo": { "ticks_run": 10, "trades_executed": 4, "avg_reputation_score": 6.17 },
+  "agents": [{"profile": "conservative", "pnl_usd": 12.4, "reputation_delta": 0.1}],
+  "validation_artifact": { "artifact_hash": "0x...", "win_rate": 0.75 },
+  "x402": { "dev_mode": true, "price_usdc": "1000" }
+}
+```
+
+## Public Endpoints
+
+The demo server runs on port 8084 and is proxied via nginx. All endpoints are
+x402-gated with `dev_mode=True` (free for judges — no wallet required).
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET`  | `https://api.opspawn.com/erc8004/demo/health` | Server health check |
+| `POST` | `https://api.opspawn.com/erc8004/demo/run` | Run full 10-tick demo pipeline |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/portfolio` | Portfolio analytics from last run |
+
+**Quick test:**
+```bash
+# Health check
+curl https://api.opspawn.com/erc8004/demo/health
+
+# Run demo (optional params: ?ticks=10&seed=42&symbol=BTC%2FUSD)
+curl -s -X POST 'https://api.opspawn.com/erc8004/demo/run?ticks=10' | python3 -m json.tool
+
+# Portfolio analytics
+curl https://api.opspawn.com/erc8004/demo/portfolio
+```
+
+**Portfolio endpoint response:**
+```json
+{
+  "source": "live",
+  "agent_profiles": [
+    {"agent_id": "...", "strategy": "conservative", "win_rate": 0.75, "total_pnl": 12.4, "reputation_score": 7.82}
+  ],
+  "consensus_stats": {"avg_agreement_rate": 0.72, "supermajority_hits": 7, "veto_count": 1},
+  "risk_metrics": {"max_drawdown": -0.042, "sharpe_estimate": 1.38, "volatility": 0.021}
+}
+```
+
+---
+
 ## ERC-8004 Standard
 
 ERC-8004 defines a standard for autonomous AI agent identity on Ethereum:
