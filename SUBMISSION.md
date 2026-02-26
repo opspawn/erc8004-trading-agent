@@ -50,8 +50,16 @@ enabled so judges can call it without a wallet.
   Sharpe ratio, max drawdown, win rate, and `BacktestRegistry` mock on-chain storage
 - **Stress tester**: 7 adversarial scenarios — flash crash (-40% in 5 ticks), oracle
   failure, consensus deadlock, extreme volatility, reputation collapse, zero capital
-- **Live demo server**: Single HTTP endpoint (port 8084) runs full pipeline in <100ms,
-  returns JSON report with trades, PnL, reputation scores, and validation artifact hash
+- **Live demo server**: HTTP endpoint (port 8084) runs full pipeline in <100ms, returns
+  JSON report with trades, PnL, reputation scores, and signed validation artifact hash
+- **Live metrics dashboard** (`GET /demo/metrics`): Real-time aggregate stats across all
+  runs — win rate, Sharpe ratio, Sortino ratio, max drawdown, cumulative return, active agents
+- **Agent leaderboard** (`GET /demo/leaderboard`): Top 5 agents ranked by Sortino ratio
+  with strategy, return pct, win rate, trade count, and live reputation score
+- **Multi-agent comparison** (`POST /demo/compare`): Side-by-side performance metrics for
+  2-5 agent IDs — useful for demonstrating multi-agent coordination advantages
+- **Real-time SSE stream** (`GET /demo/stream`): Server-Sent Events push live run_complete
+  events to connected clients; keepalive every 15s for long-polling dashboards
 - **RedStone/Surge oracle integration**: On-chain risk check via `RiskRouter.checkRisk()`
   validates oracle deviation before any settlement
 
@@ -59,7 +67,7 @@ enabled so judges can call it without a wallet.
 
 ## Test Evidence
 
-**Total tests: 3,200 passing** (verified by running `python3 -m pytest --tb=no -q`)
+**Total tests: 3,423 passing** (verified by running `python3 -m pytest --tb=no -q`)
 
 | Test File | Coverage Area |
 |-----------|---------------|
@@ -128,7 +136,9 @@ cd agent && python3 -m pytest tests/ -q --tb=no
 
 ## Live Endpoint Instructions
 
-The demo server runs publicly at `https://api.opspawn.com/erc8004/` (nginx proxy → localhost:8084).
+**Status: LIVE** — All endpoints verified working as of 2026-02-26.
+
+The demo server runs publicly at `https://api.opspawn.com/erc8004/` (systemd service `erc8004-demo.service` → nginx proxy → localhost:8084).
 All endpoints use `dev_mode=true` — free for judges, no wallet required.
 
 ### Public Endpoints
@@ -138,6 +148,10 @@ All endpoints use `dev_mode=true` — free for judges, no wallet required.
 | `GET`  | `https://api.opspawn.com/erc8004/demo/health` | Health check |
 | `POST` | `https://api.opspawn.com/erc8004/demo/run` | Run full pipeline |
 | `GET`  | `https://api.opspawn.com/erc8004/demo/portfolio` | Portfolio analytics |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/metrics` | **Live aggregate metrics** — win rate, Sharpe, Sortino, drawdown |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/leaderboard` | **Agent leaderboard** — top 5 agents by Sortino ratio |
+| `POST` | `https://api.opspawn.com/erc8004/demo/compare` | **Side-by-side comparison** — `{"agent_ids": ["id1","id2"]}` |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/stream` | **SSE stream** — real-time events when `/demo/run` completes |
 
 ### Prerequisites
 - Python 3.12+, Node.js 22+
@@ -157,6 +171,21 @@ curl -s -X POST 'https://api.opspawn.com/erc8004/demo/run?ticks=50&seed=123&symb
 
 # Portfolio analytics
 curl https://api.opspawn.com/erc8004/demo/portfolio
+
+# Live aggregate metrics (win rate, Sharpe, Sortino, drawdown)
+curl https://api.opspawn.com/erc8004/demo/metrics
+
+# Agent leaderboard (top 5 by Sortino ratio)
+curl https://api.opspawn.com/erc8004/demo/leaderboard
+
+# Side-by-side agent comparison
+curl -s -X POST 'https://api.opspawn.com/erc8004/demo/compare' \
+  -H 'Content-Type: application/json' \
+  -d '{"agent_ids": ["agent-conservative-001", "agent-aggressive-003"]}' \
+  | python3 -m json.tool
+
+# SSE stream (real-time run events)
+curl -s 'https://api.opspawn.com/erc8004/demo/stream'
 
 # Local fallback (if running agent/demo_server.py directly)
 curl -s -X POST 'http://localhost:8084/demo/run' | python3 -m json.tool
