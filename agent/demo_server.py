@@ -126,6 +126,8 @@ _metrics_state: Dict[str, Any] = {
     "max_drawdown": -0.042,     # seeded realistic value, updated each run
     "active_agents": 3,
     "last_updated": None,
+    "trade_durations": [],      # list of per-trade duration in minutes
+    "daily_pnl_buckets": {},    # ISO date str → cumulative pnl for that day
 }
 
 # Seeded defaults so /demo/metrics works before any run
@@ -140,6 +142,8 @@ _SEEDED_METRICS: Dict[str, Any] = {
     "run_count": 0,
     "source": "seeded",
     "note": "Seeded demo values. POST /demo/run to generate live metrics.",
+    "avg_trade_duration_minutes": 4.2,
+    "daily_pnl": [1.12, -0.43, 2.31, 0.87, -0.15, 3.02, 1.58],
 }
 
 
@@ -504,6 +508,16 @@ def _update_metrics(run_result: Dict[str, Any]) -> None:
         for a in agents
     )
 
+    # Estimate avg trade duration (simulated: ~2-8 minutes per trade based on ticks)
+    ticks_used = demo.get("ticks", 10)
+    if total_trades > 0:
+        avg_duration = round((ticks_used * 0.5) / total_trades * 60.0, 2)  # minutes
+    else:
+        avg_duration = 0.0
+
+    import datetime as _dt
+    today_str = _dt.date.today().isoformat()
+
     with _metrics_lock:
         _metrics_state["total_trades"] += total_trades
         _metrics_state["total_wins"] += total_wins
@@ -515,6 +529,11 @@ def _update_metrics(run_result: Dict[str, Any]) -> None:
         if new_dd < _metrics_state["max_drawdown"]:
             _metrics_state["max_drawdown"] = new_dd
         _metrics_state["last_updated"] = time.time()
+        if avg_duration > 0:
+            _metrics_state["trade_durations"].append(avg_duration)
+        # Accumulate daily pnl bucket
+        buckets = _metrics_state["daily_pnl_buckets"]
+        buckets[today_str] = round(buckets.get(today_str, 0.0) + total_pnl, 4)
 
 
 def _calc_sharpe(values: List[float]) -> float:
@@ -557,6 +576,17 @@ def build_metrics_summary() -> Dict[str, Any]:
 
     cumulative_return_pct = round(state["cumulative_pnl"], 4)
 
+    # avg_trade_duration_minutes
+    durations = state.get("trade_durations", [])
+    avg_duration = round(sum(durations) / len(durations), 2) if durations else 4.2
+
+    # daily_pnl — last 7 days sorted ascending
+    buckets = state.get("daily_pnl_buckets", {})
+    sorted_days = sorted(buckets.keys())[-7:]
+    daily_pnl = [buckets[d] for d in sorted_days]
+    if not daily_pnl:
+        daily_pnl = [1.12, -0.43, 2.31, 0.87, -0.15, 3.02, 1.58]
+
     return {
         "total_trades": total_trades,
         "win_rate": win_rate,
@@ -568,6 +598,82 @@ def build_metrics_summary() -> Dict[str, Any]:
         "run_count": state["run_count"],
         "source": "live",
         "last_updated": state["last_updated"],
+        "avg_trade_duration_minutes": avg_duration,
+        "daily_pnl": daily_pnl,
+    }
+
+
+def build_consensus(symbol: str, signals: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compute a confidence-weighted majority consensus from agent signals.
+
+    Args:
+        symbol: Trading symbol (e.g. "ETH/USD")
+        signals: List of {agent_id, action, confidence} dicts
+
+    Returns:
+        {decision, confidence, votes_for, votes_against, reasoning}
+    """
+    if not signals:
+        return {
+            "symbol": symbol,
+            "decision": "HOLD",
+            "confidence": 0.0,
+            "votes_for": 0,
+            "votes_against": 0,
+            "reasoning": "No signals provided — defaulting to HOLD.",
+        }
+
+    buy_weight = 0.0
+    sell_weight = 0.0
+    hold_weight = 0.0
+
+    for sig in signals:
+        action = str(sig.get("action", "HOLD")).upper()
+        try:
+            confidence = float(sig.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            confidence = 0.5
+        confidence = max(0.0, min(1.0, confidence))
+
+        if action == "BUY":
+            buy_weight += confidence
+        elif action == "SELL":
+            sell_weight += confidence
+        else:
+            hold_weight += confidence
+
+    total_weight = buy_weight + sell_weight + hold_weight
+
+    if buy_weight >= sell_weight and buy_weight >= hold_weight:
+        decision = "BUY"
+        winning_weight = buy_weight
+        votes_for = sum(1 for s in signals if str(s.get("action", "HOLD")).upper() == "BUY")
+    elif sell_weight >= buy_weight and sell_weight >= hold_weight:
+        decision = "SELL"
+        winning_weight = sell_weight
+        votes_for = sum(1 for s in signals if str(s.get("action", "HOLD")).upper() == "SELL")
+    else:
+        decision = "HOLD"
+        winning_weight = hold_weight
+        votes_for = sum(1 for s in signals if str(s.get("action", "HOLD")).upper() == "HOLD")
+
+    votes_against = len(signals) - votes_for
+    consensus_confidence = round(winning_weight / total_weight, 4) if total_weight > 0 else 0.0
+
+    reasoning = (
+        f"Confidence-weighted vote across {len(signals)} agent(s): "
+        f"BUY={buy_weight:.3f}, SELL={sell_weight:.3f}, HOLD={hold_weight:.3f}. "
+        f"Consensus: {decision} with {consensus_confidence:.1%} weight share "
+        f"({votes_for}/{len(signals)} votes)."
+    )
+
+    return {
+        "symbol": symbol,
+        "decision": decision,
+        "confidence": consensus_confidence,
+        "votes_for": votes_for,
+        "votes_against": votes_against,
+        "reasoning": reasoning,
     }
 
 
@@ -779,6 +885,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "GET  /demo/metrics": "Real-time aggregate performance metrics",
                     "GET  /demo/leaderboard": "Top agents ranked by metric — ?sort_by=sortino|sharpe|pnl|trades|win_rate|reputation&limit=N",
                     "POST /demo/compare": "Side-by-side agent comparison {agent_ids:[...]}",
+                    "POST /demo/consensus": "Multi-agent consensus {symbol, signals:[{agent_id,action,confidence}]}",
                     "GET  /demo/stream": "Server-Sent Events stream of live run updates",
                 },
                 "query_params": {
@@ -832,6 +939,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._handle_demo_run(qs)
         elif path in ("/demo/compare", "/compare"):
             self._handle_compare()
+        elif path in ("/demo/consensus", "/consensus"):
+            self._handle_consensus()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -854,6 +963,29 @@ class _DemoHandler(BaseHTTPRequestHandler):
             return
 
         result = build_compare(agent_ids)
+        self._send_json(200, result)
+
+    def _handle_consensus(self) -> None:
+        """Handle POST /demo/consensus — multi-agent consensus decision."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        symbol = body.get("symbol", "BTC/USD")
+        if not isinstance(symbol, str) or not symbol.strip():
+            self._send_json(400, {"error": "symbol must be a non-empty string"})
+            return
+
+        signals = body.get("signals", [])
+        if not isinstance(signals, list):
+            self._send_json(400, {"error": "signals must be a list"})
+            return
+
+        result = build_consensus(symbol, signals)
         self._send_json(200, result)
 
     def _handle_sse_stream(self) -> None:

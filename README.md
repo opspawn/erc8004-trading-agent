@@ -198,7 +198,7 @@ python3 demo_cli.py --symbol SOL/USD --ticks 100 --seed 7
 ## Live Demo
 
 **Project**: ERC-8004 Autonomous Trading Agent
-**Tests**: 3,483 passing
+**Tests**: 3,541 passing
 
 Hit the live demo endpoint — no wallet, no setup:
 
