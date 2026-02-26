@@ -5023,6 +5023,253 @@ def get_agent_attribution(agent_id: str) -> Dict[str, Any]:
     }
 
 
+# ── S37: Portfolio Risk Dashboard ─────────────────────────────────────────────
+
+_RISK_AGENTS_DEFAULT = ["alpha-agent", "beta-agent", "gamma-agent"]
+
+
+def get_portfolio_risk_dashboard() -> Dict[str, Any]:
+    """
+    Consolidated portfolio risk view: VaR, CVaR, drawdown, Sharpe, beta,
+    and a 3×3 correlation matrix for the top 3 agents.
+
+    All values are deterministic (seeded from current day bucket).
+    """
+    import datetime as _dt
+    today_str = _dt.date.today().isoformat()
+    seed_val = int(hashlib.md5(f"risk-dashboard:{today_str}".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    def _norm(lo: float, hi: float) -> float:
+        return round(lo + rng.random() * (hi - lo), 6)
+
+    # VaR / CVaR (expressed as negative portfolio fraction)
+    var_95 = round(-_norm(0.015, 0.040), 6)   # -1.5% to -4.0%
+    var_99 = round(var_95 * _norm(1.35, 1.70), 6)
+    cvar = round(var_99 * _norm(1.10, 1.30), 6)
+
+    # Other metrics
+    max_drawdown = round(-_norm(0.05, 0.25), 6)
+    sharpe_ratio = round(_norm(0.8, 2.8), 6)
+    beta_to_market = round(_norm(0.30, 1.50), 6)
+
+    # 3×3 correlation matrix (symmetric, diag = 1.0)
+    agents = _RISK_AGENTS_DEFAULT
+    n = len(agents)
+    corr_vals: Dict[str, float] = {}
+    matrix: list = []
+    for i in range(n):
+        row = []
+        for j in range(n):
+            if i == j:
+                row.append(1.0)
+            elif j < i:
+                row.append(matrix[j][i])
+            else:
+                c = round(_norm(-0.2, 0.9), 6)
+                row.append(c)
+        matrix.append(row)
+
+    correlation_matrix = {
+        "agents": agents,
+        "matrix": matrix,
+    }
+
+    return {
+        "var_95": var_95,
+        "var_99": var_99,
+        "cvar": cvar,
+        "max_drawdown": max_drawdown,
+        "sharpe_ratio": sharpe_ratio,
+        "beta_to_market": beta_to_market,
+        "correlation_matrix": correlation_matrix,
+        "generated_at": time.time(),
+    }
+
+
+# ── S37: Ensemble Vote ─────────────────────────────────────────────────────────
+
+_ENSEMBLE_VOTES = ("BUY", "SELL", "HOLD")
+_ENSEMBLE_WEIGHTS: Dict[str, float] = {
+    "alpha-agent": 0.40,
+    "beta-agent": 0.35,
+    "gamma-agent": 0.25,
+}
+_ENSEMBLE_DEFAULT_WEIGHT = 0.20
+
+
+def vote_ensemble(agent_ids: List[str], market_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Weighted majority-vote trading decision from an ensemble of agents.
+
+    Each agent votes BUY/SELL/HOLD based on a deterministic hash of
+    (agent_id + market_data fingerprint). The weighted majority wins.
+
+    Args:
+        agent_ids: List of agent IDs to include in the vote.
+        market_data: Arbitrary market snapshot dict (used only for seeding).
+
+    Returns:
+        {decision, confidence, votes: [{agent_id, vote, weight, confidence}]}
+    """
+    if not agent_ids:
+        raise ValueError("agent_ids must be non-empty")
+
+    # Fingerprint market_data deterministically
+    md_str = json.dumps(market_data, sort_keys=True, default=str)
+    md_hash = hashlib.md5(md_str.encode()).hexdigest()[:8]
+
+    votes: List[Dict[str, Any]] = []
+    tally: Dict[str, float] = {"BUY": 0.0, "SELL": 0.0, "HOLD": 0.0}
+
+    for agent_id in agent_ids:
+        seed_val = int(hashlib.md5(f"{agent_id}:{md_hash}:vote".encode()).hexdigest()[:8], 16)
+        rng = random.Random(seed_val)
+        vote = _ENSEMBLE_VOTES[seed_val % 3]
+        confidence = round(0.40 + rng.random() * 0.55, 6)  # 0.40–0.95
+        weight = _ENSEMBLE_WEIGHTS.get(agent_id, _ENSEMBLE_DEFAULT_WEIGHT)
+        tally[vote] += weight * confidence
+        votes.append({
+            "agent_id": agent_id,
+            "vote": vote,
+            "weight": weight,
+            "confidence": confidence,
+        })
+
+    decision = max(tally, key=lambda k: tally[k])
+    total_weight = sum(v["weight"] for v in votes)
+    ensemble_confidence = round(tally[decision] / max(total_weight, 1e-9), 6)
+
+    return {
+        "decision": decision,
+        "confidence": ensemble_confidence,
+        "votes": votes,
+        "tally": {k: round(v, 6) for k, v in tally.items()},
+        "generated_at": time.time(),
+    }
+
+
+# ── S37: Alpha Decay ───────────────────────────────────────────────────────────
+
+_ALPHA_DECAY_RECS = [
+    "Strategy still generating edge — maintain current allocation.",
+    "Alpha decaying — consider retraining or reducing position size.",
+    "Half-life exceeded — rotate capital to higher-alpha strategies.",
+    "Alpha near zero — place strategy on watchlist, do not scale.",
+]
+
+
+def get_alpha_decay(strategy_id: str) -> Dict[str, Any]:
+    """
+    Model the alpha half-life of a trading strategy.
+
+    Uses an exponential decay formula: alpha(t) = alpha_0 * 0.5^(t/half_life)
+
+    Returns 30-day decay curve seeded deterministically from strategy_id.
+    """
+    seed_val = int(hashlib.md5(f"{strategy_id}:alpha-decay".encode()).hexdigest()[:8], 16)
+    rng = random.Random(seed_val)
+
+    half_life_days = int(5 + seed_val % 56)   # 5–60 days
+    initial_alpha = round(0.005 + rng.random() * 0.095, 6)  # 0.5%–10%
+    current_alpha = round(initial_alpha * (0.5 ** (1.0 / half_life_days)), 6)
+
+    decay_curve = []
+    for day in range(31):
+        alpha_t = round(initial_alpha * (0.5 ** (day / half_life_days)), 8)
+        decay_curve.append({"day": day, "alpha": alpha_t})
+
+    # Recommendation based on remaining alpha fraction
+    remaining_fraction = current_alpha / max(initial_alpha, 1e-12)
+    if remaining_fraction > 0.80:
+        rec = _ALPHA_DECAY_RECS[0]
+    elif remaining_fraction > 0.50:
+        rec = _ALPHA_DECAY_RECS[1]
+    elif remaining_fraction > 0.25:
+        rec = _ALPHA_DECAY_RECS[2]
+    else:
+        rec = _ALPHA_DECAY_RECS[3]
+
+    return {
+        "strategy_id": strategy_id,
+        "half_life_days": half_life_days,
+        "initial_alpha": initial_alpha,
+        "current_alpha": current_alpha,
+        "decay_curve": decay_curve,
+        "recommendation": rec,
+        "generated_at": time.time(),
+    }
+
+
+# ── S37: Cross-Training ────────────────────────────────────────────────────────
+
+_CROSS_TRAIN_KNOWLEDGE_POOL = [
+    "momentum_signal_weighting",
+    "volatility_regime_detection",
+    "kelly_fraction_calibration",
+    "drawdown_threshold_tuning",
+    "cross_asset_correlation_mapping",
+    "order_book_imbalance_features",
+    "sentiment_signal_fusion",
+    "execution_timing_heuristics",
+    "stop_loss_placement_logic",
+    "mean_reversion_entry_signals",
+    "portfolio_beta_hedging",
+    "risk_parity_allocation",
+]
+
+
+def cross_train_agents(
+    source_agent_id: str,
+    target_agent_id: str,
+    transfer_ratio: float,
+) -> Dict[str, Any]:
+    """
+    Simulate knowledge transfer between two agents.
+
+    Args:
+        source_agent_id: Agent providing knowledge.
+        target_agent_id: Agent receiving knowledge.
+        transfer_ratio: Fraction of knowledge transferred (0–1).
+
+    Returns:
+        {knowledge_transferred, performance_delta, new_accuracy}
+    """
+    if not (0.0 <= transfer_ratio <= 1.0):
+        raise ValueError("transfer_ratio must be between 0.0 and 1.0")
+
+    seed_val = int(
+        hashlib.md5(f"{source_agent_id}:{target_agent_id}:cross-train".encode()).hexdigest()[:8],
+        16,
+    )
+    rng = random.Random(seed_val)
+
+    # Number of knowledge items transferred scales with ratio
+    n_items = max(1, int(len(_CROSS_TRAIN_KNOWLEDGE_POOL) * transfer_ratio))
+    shuffled = list(_CROSS_TRAIN_KNOWLEDGE_POOL)
+    rng.shuffle(shuffled)
+    knowledge_transferred = shuffled[:n_items]
+
+    # Performance delta: positive with high transfer_ratio, noisy
+    base_delta = rng.gauss(transfer_ratio * 0.08, 0.02)
+    performance_delta = round(max(-0.05, min(0.15, base_delta)), 6)
+
+    # Target's baseline accuracy from seed
+    target_seed = int(hashlib.md5(f"{target_agent_id}:accuracy".encode()).hexdigest()[:8], 16)
+    baseline_accuracy = round(0.50 + (target_seed % 30) / 100.0, 6)  # 50–80%
+    new_accuracy = round(min(0.99, baseline_accuracy + performance_delta), 6)
+
+    return {
+        "source_agent_id": source_agent_id,
+        "target_agent_id": target_agent_id,
+        "transfer_ratio": transfer_ratio,
+        "knowledge_transferred": knowledge_transferred,
+        "performance_delta": performance_delta,
+        "new_accuracy": new_accuracy,
+        "generated_at": time.time(),
+    }
+
+
 # Seed the feed buffer on module load
 _SERVER_START_TIME = time.time()
 _seed_feed_buffer()
@@ -5247,6 +5494,18 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(200, get_agent_attribution(agent_id))
             else:
                 self._send_json(404, {"error": f"Not found: {path}"})
+        # S37: Portfolio risk dashboard
+        elif path in ("/demo/portfolio/risk-dashboard",):
+            self._send_json(200, get_portfolio_risk_dashboard())
+        # S37: Alpha decay (path /demo/strategy/alpha-decay/{strategy_id})
+        elif path.startswith("/demo/strategy/alpha-decay/"):
+            parts = path.split("/")
+            # Expected: ['', 'demo', 'strategy', 'alpha-decay', '{strategy_id}']
+            if len(parts) == 5 and parts[4]:
+                strategy_id = parts[4]
+                self._send_json(200, get_alpha_decay(strategy_id))
+            else:
+                self._send_json(404, {"error": f"Not found: {path}"})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -5311,6 +5570,12 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S36: Strategy backtester UI
         elif path in ("/demo/backtest/run",):
             self._handle_backtest_run()
+        # S37: Ensemble vote
+        elif path in ("/demo/ensemble/vote",):
+            self._handle_ensemble_vote()
+        # S37: Cross-train agents
+        elif path in ("/demo/agents/cross-train",):
+            self._handle_cross_train()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -5987,6 +6252,75 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 strategy_config=strategy_config,
                 lookback_days=lookback_days,
                 assets=[str(a) for a in assets],
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_ensemble_vote(self) -> None:
+        """Handle POST /demo/ensemble/vote — weighted ensemble trading decision."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_ids = body.get("agent_ids")
+        if not isinstance(agent_ids, list) or len(agent_ids) == 0:
+            self._send_json(400, {"error": "'agent_ids' must be a non-empty list"})
+            return
+
+        market_data = body.get("market_data", {})
+        if not isinstance(market_data, dict):
+            self._send_json(400, {"error": "'market_data' must be an object"})
+            return
+
+        try:
+            result = vote_ensemble(
+                agent_ids=[str(a) for a in agent_ids],
+                market_data=market_data,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_cross_train(self) -> None:
+        """Handle POST /demo/agents/cross-train — transfer knowledge between agents."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        source_agent_id = body.get("source_agent_id")
+        target_agent_id = body.get("target_agent_id")
+        transfer_ratio = body.get("transfer_ratio", 0.5)
+
+        if not isinstance(source_agent_id, str) or not source_agent_id.strip():
+            self._send_json(400, {"error": "'source_agent_id' must be a non-empty string"})
+            return
+        if not isinstance(target_agent_id, str) or not target_agent_id.strip():
+            self._send_json(400, {"error": "'target_agent_id' must be a non-empty string"})
+            return
+        try:
+            transfer_ratio = float(transfer_ratio)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "'transfer_ratio' must be a number"})
+            return
+
+        try:
+            result = cross_train_agents(
+                source_agent_id=source_agent_id,
+                target_agent_id=target_agent_id,
+                transfer_ratio=transfer_ratio,
             )
             self._send_json(200, result)
         except ValueError as exc:
