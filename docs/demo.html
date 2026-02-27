@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ERC-8004 Trading Agent — Live Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a1a;
+      color: #e0e0e0;
+      font-family: 'Courier New', 'Lucida Console', monospace;
+      padding: 24px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    h1 {
+      color: #00ff88;
+      text-align: center;
+      font-size: 2em;
+      margin-bottom: 8px;
+      letter-spacing: 0.05em;
+    }
+    .subtitle {
+      text-align: center;
+      color: #888;
+      font-size: 0.9em;
+      margin-bottom: 8px;
+    }
+    .header-stats {
+      text-align: center;
+      color: #888;
+      font-size: 0.95em;
+      margin-bottom: 32px;
+      padding: 12px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #222;
+    }
+    .header-stats span {
+      color: #00ff88;
+      font-weight: bold;
+      font-size: 1.1em;
+    }
+    .header-stats .sep { color: #555; margin: 0 8px; }
+    .step {
+      background: #242424;
+      border: 1px solid #3a3a3a;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .step:hover {
+      border-color: #00aaff44;
+    }
+    .step-title {
+      color: #00aaff;
+      font-size: 1.15em;
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    .step-url {
+      color: #888;
+      font-size: 0.82em;
+      margin-bottom: 14px;
+    }
+    .step-url code {
+      background: #1a1a1a;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #ffaa00;
+    }
+    pre {
+      background: #111;
+      padding: 16px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.82em;
+      color: #00ff88;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+      border: 1px solid #2a2a2a;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    .footer {
+      text-align: center;
+      color: #555;
+      font-size: 0.8em;
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 1px solid #333;
+    }
+    .footer a { color: #00aaff; text-decoration: none; }
+    .quickstart {
+      background: #1e2a1e;
+      border: 1px solid #2a4a2a;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+    }
+    .quickstart h2 { color: #00ff88; margin-bottom: 12px; font-size: 1em; }
+    .quickstart pre { color: #aaffaa; background: #111; font-size: 0.82em; }
+  </style>
+</head>
+<body>
+  <h1>ERC-8004 Trading Agent</h1>
+  <p class="subtitle">On-Chain Trading Agent Identity Standard — lablab.ai Hackathon</p>
+
+  <div class="header-stats">
+    <span>6,170</span> tests passing
+    <span class="sep">•</span>
+    <span>10</span>-agent swarm
+    <span class="sep">•</span>
+    <span>6</span> strategies
+    <span class="sep">•</span>
+    <span>VaR 95/99%</span> risk engine
+    <span class="sep">•</span>
+    Sprint <span>S50</span>
+  </div>
+
+  <div class="quickstart">
+    <h2>▶ Quick Start (run locally)</h2>
+    <pre>pip install -r requirements.txt
+python agent/demo_server.py &amp;
+curl http://localhost:8084/demo/health</pre>
+  </div>
+
+  <h2 style="color:#888; font-size:0.95em; margin:24px 0 4px; text-transform:uppercase; letter-spacing:0.1em;">Live Demo Outputs (captured from running server)</h2>
+
+  <div class="step">
+    <div class="step-title">1. Health Check</div>
+    <div class="step-url"><code>GET /demo/health</code></div>
+    <pre>{
+  "status": "ok",
+  "service": "ERC-8004 Demo Server",
+  "version": "S47",
+  "sprint": "S47",
+  "tests": 6121,
+  "test_count": 6121,
+  "port": 8084,
+  "uptime_s": 6.2,
+  "dev_mode": true,
+  "highlights": [
+    "Portfolio risk engine (VaR 95/99%)",
+    "10-agent swarm with 6 strategies",
+    "Position sizing (Kelly/volatility/fixed)",
+    "Exposure dashboard with concentration index",
+    "Performance summary endpoint (/api/v1/performance/summary)"
+  ]
+}</pre>
+  </div>
+  <div class="step">
+    <div class="step-title">2. 10-Agent Swarm Vote</div>
+    <div class="step-url"><code>POST /api/v1/swarm/vote</code></div>
+    <pre>{
+  "symbol": "BTC-USD",
+  "signal_type": "BUY",
+  "votes": [
+    {
+      "agent_id": "quant-1",
+      "strategy": "momentum",
+      "stake": 12.0,
+      "vote": "BUY",
+      "confidence": 0.777,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-2",
+      "strategy": "mean_revert",
+      "stake": 10.0,
+      "vote": "SELL",
+      "confidence": 0.69,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-3",
+      "strategy": "arb",
+      "stake": 11.0,
+      "vote": "BUY",
+      "confidence": 0.676,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-4",
+      "strategy": "trend",
+      "stake": 9.0,
+      "vote": "BUY",
+      "confidence": 0.771,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-5",
+      "strategy": "contrarian",
+      "stake": 8.0,
+      "vote": "SELL",
+      "confidence": 0.625,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-6",
+      "strategy": "hybrid",
+      "stake": 10.0,
+      "vote": "BUY",
+      "confidence": 0.527,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-7",
+      "strategy": "momentum",
+      "stake": 11.0,
+      "vote": "BUY",
+      "confidence": 0.743,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-8",
+      "strategy": "trend",
+      "stake": 9.5,
+      "vote": "SELL",
+      "confidence": 0.568,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-9",
+      "strategy": "mean_revert",
+      "stake": 8.5,
+      "vote": "SELL",
+      "confidence": 0.672,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-10",
+      "strategy": "contrarian",
+      "stake": 10.0,
+      "vote": "SELL",
+      "confidence": 0.638,
+      "agrees": false
+    }
+  ],
+  "vote_summary": {
+    "BUY": 5,
+    "SELL": 5
+  },
+  "agree_count": 5,
+  "total_agents": 10,
+  "weighted_agree_fraction": 0.5354,
+  "consensus_threshold": 0.6666666666666666,
+  "consensus_reached": false,
+  "consensus_action": "HOLD",
+  "total_stake": 99.0,
+  "voted_at": 1772175292.6380749,
+  "version": "S46"
+}</pre>
+  </div>
+  <div class="step">
+    <div class="step-title">3. Portfolio Risk (VaR)</div>
+    <div class="step-url"><code>GET /api/v1/risk/portfolio</code></div>
+    <pre>{
+  "portfolio": {
+    "var_95": 0.042328,
+    "var_99": 0.055548,
+    "sharpe_ratio": 0.9955,
+    "sortino_ratio": 1.01,
+    "calmar_ratio": 1.9969,
+    "max_drawdown": 0.214974,
+    "n_symbols": 4,
+    "history_days": 252
+  },
+  "per_symbol": {
+    "BTC-USD": {
+      "var_95": 0.058319,
+      "var_99": 0.08566,
+      "sharpe": 0.9204,
+      "sortino": 0.9206,
+      "calmar": 1.1332,
+      "max_drawdown": 0.483906
+    },
+    "ETH-USD": {
+      "var_95": 0.066636,
+      "var_99": 0.105472,
+      "sharpe": 1.1445,
+      "sortino": 1.1498,
+      "calmar": 1.913,
+      "max_drawdown": 0.412161
+    },
+    "SOL-USD": {
+      "var_95": 0.087177,
+      "var_99": 0.125879,
+      "sharpe": -0.6946,
+      "sortino": -0.7274,
+      "calmar": -0.8457,
+      "max_drawdown": 0.686122
+    },
+    "MATIC-USD": {
+      "var_95": 0.112479,
+      "var_99": 0.15085,
+      "sharpe": 0.8435,
+      "sortino": 0.9144,
+      "calmar": 1.5509,
+      "max_drawdown": 0.619316
+    }
+  },
+  "correlation_matrix": {
+    "BTC-USD": {
+      "BTC-USD": 1.0,
+      "ETH-USD": 0.0167,
+      "SOL-USD": -0.0216,
+      "MATIC-USD": -0.0424
+    },
+    "ETH-USD": {
+      "BTC-USD": 0.0167,
+      "ETH-USD": 1.0,
+      "SOL-USD": -0.0027,
+      "MATIC-USD": -0.0041
+    },
+    "SOL-USD": {
+      "BTC-USD": -0.0216,
+      "ETH-USD": -0.0027,
+      "SOL-USD": 1.0,
+      "MATIC-USD": -0.0256
+    },
+    "MATIC-USD": {
+      "BTC-USD": -0.0424,
+      "ETH-USD": -0.0041,
+      "SOL-USD": -0.0256,
+      "MATIC-USD": 1.0
+    }
+  },
+  "symbols": [
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "MATIC-USD"
+  ],
+  "generated_at": 1772175292.6454248,
+  "version": "S46"
+}</pre>
+  </div>
+  <div class="step">
+    <div class="step-title">4. Performance Summary</div>
+    <div class="step-url"><code>GET /api/v1/performance/summary</code></div>
+    <pre>{
+  "total_paper_trades": 0,
+  "total_pnl": 0.0,
+  "win_rate": 0.0,
+  "avg_trade_pnl": 0.0,
+  "best_trade": 0.0,
+  "worst_trade": 0.0,
+  "sharpe_ratio": 0.0,
+  "drawdown_pct": 0.0,
+  "active_agents": 10,
+  "version": "S48",
+  "note": "No completed paper trades yet — place orders via POST /api/v1/trading/paper/order"
+}</pre>
+  </div>
+  <div class="step">
+    <div class="step-title">5. Live Showcase</div>
+    <div class="step-url"><code>POST /api/v1/demo/showcase</code></div>
+    <pre>{
+  "showcase": "ERC-8004 Full Pipeline",
+  "version": "S47",
+  "total_duration_ms": 6.26,
+  "steps": [
+    {
+      "step": 1,
+      "label": "Live Price Tick — BTC-USD",
+      "duration_ms": 0.06,
+      "result": {
+        "symbol": "BTC-USD",
+        "price": 68046.75,
+        "bid": 68036.54,
+        "ask": 68058.55,
+        "volume_24h": 18711.01,
+        "change_24h_pct": -0.608,
+        "source": "demo_feed"
+      }
+    },
+    {
+      "step": 2,
+      "label": "10-Agent Swarm Vote — LONG BTC-USD",
+      "duration_ms": 0.17,
+      "result": {
+        "total_agents": 10,
+        "agree_count": 6,
+        "weighted_agree_fraction": 0.6313,
+        "consensus_reached": false,
+        "consensus_action": "HOLD",
+        "vote_summary": {
+          "BUY": 6,
+          "SELL": 4
+        }
+      }
+    },
+    {
+      "step": 3,
+      "label": "Risk Engine — VaR 95/99% + Kelly Position Size",
+      "duration_ms": 6.01,
+      "result": {
+        "portfolio_var_95": 0.042328,
+        "portfolio_var_99": 0.055548,
+        "portfolio_sharpe": 0.9955,
+        "btc_recommended_position_usd": 55852.0,
+        "btc_position_pct_of_capital": 0.5585,
+        "sizing_method": "volatility",
+        "rationale": "Risk budget $2000.00 / daily vol 0.0358"
+      }
+    },
+    {
+      "step": 4,
+      "label": "Paper Trade Execution — Consensus Decision",
+      "duration_ms": 0.01,
+      "result": {
+        "trade_id": "s47-showcase-1772175292",
+        "symbol": "BTC-USD",
+        "side": "HOLD",
+        "qty": 0.820912,
+        "fill_price": 68036.54,
+        "position_usd": 55852.0,
+        "fee_usd": 27.926,
+        "slippage_pct": 0.05,
+        "mode": "paper",
+        "driven_by": "swarm_consensus",
+        "agent_count": 10
+      }
+    }
+  ],
+  "summary": {
+    "btc_price": 68046.75,
+    "swarm_consensus": "HOLD",
+    "consensus_agents": "6/10",
+    "var_95": 0.042328,
+    "position_usd": 55852.0,
+    "trade_executed": "s47-showcase-1772175292"
+  },
+  "generated_at": 1772175292.658732
+}</pre>
+  </div>
+
+  <div class="footer">
+    <p>ERC-8004 Trading Agent &mdash;
+    <a href="https://github.com/opspawn/erc8004-trading-agent">github.com/opspawn/erc8004-trading-agent</a>
+    &mdash; Built for lablab.ai ERC-8004 Hackathon 2026</p>
+  </div>
+</body>
+</html>
