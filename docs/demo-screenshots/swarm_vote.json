@@ -7,7 +7,7 @@
       "strategy": "momentum",
       "stake": 12.0,
       "vote": "BUY",
-      "confidence": 0.777,
+      "confidence": 0.767,
       "agrees": true
     },
     {
@@ -15,7 +15,7 @@
       "strategy": "mean_revert",
       "stake": 10.0,
       "vote": "SELL",
-      "confidence": 0.69,
+      "confidence": 0.626,
       "agrees": false
     },
     {
@@ -23,7 +23,7 @@
       "strategy": "arb",
       "stake": 11.0,
       "vote": "BUY",
-      "confidence": 0.676,
+      "confidence": 0.748,
       "agrees": true
     },
     {
@@ -31,7 +31,7 @@
       "strategy": "trend",
       "stake": 9.0,
       "vote": "BUY",
-      "confidence": 0.771,
+      "confidence": 0.726,
       "agrees": true
     },
     {
@@ -39,39 +39,39 @@
       "strategy": "contrarian",
       "stake": 8.0,
       "vote": "SELL",
-      "confidence": 0.625,
+      "confidence": 0.764,
       "agrees": false
     },
     {
       "agent_id": "quant-6",
       "strategy": "hybrid",
       "stake": 10.0,
-      "vote": "BUY",
-      "confidence": 0.527,
-      "agrees": true
+      "vote": "SELL",
+      "confidence": 0.53,
+      "agrees": false
     },
     {
       "agent_id": "quant-7",
       "strategy": "momentum",
       "stake": 11.0,
       "vote": "BUY",
-      "confidence": 0.743,
+      "confidence": 0.721,
       "agrees": true
     },
     {
       "agent_id": "quant-8",
       "strategy": "trend",
       "stake": 9.5,
-      "vote": "SELL",
-      "confidence": 0.568,
-      "agrees": false
+      "vote": "BUY",
+      "confidence": 0.539,
+      "agrees": true
     },
     {
       "agent_id": "quant-9",
       "strategy": "mean_revert",
       "stake": 8.5,
       "vote": "SELL",
-      "confidence": 0.672,
+      "confidence": 0.576,
       "agrees": false
     },
     {
@@ -79,7 +79,7 @@
       "strategy": "contrarian",
       "stake": 10.0,
       "vote": "SELL",
-      "confidence": 0.638,
+      "confidence": 0.721,
       "agrees": false
     }
   ],
@@ -89,11 +89,11 @@
   },
   "agree_count": 5,
   "total_agents": 10,
-  "weighted_agree_fraction": 0.5354,
+  "weighted_agree_fraction": 0.5303,
   "consensus_threshold": 0.6666666666666666,
   "consensus_reached": false,
   "consensus_action": "HOLD",
   "total_stake": 99.0,
-  "voted_at": 1772175292.6380749,
+  "voted_at": 1772176147.8663528,
   "version": "S46"
 }

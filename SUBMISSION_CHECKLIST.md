@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S50 (demo HTML page, README rewrite, submission polish)
+**Sprint**: S51 (server updated to S50, submission prep verified, 20 new server tests)
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Technical Quality
 
-- [x] **Test coverage** — 6,170 passing tests across 50 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Test coverage** — 6,190 passing tests across 51 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
 - [x] **Portfolio risk engine** — VaR at 95%/99% (historical simulation), Sharpe/Sortino/Calmar, cross-symbol correlation matrix (S46)
 - [x] **Position sizing** — Volatility-based, Half-Kelly, fixed-fraction; POST `/api/v1/risk/position-size` (S46)
 - [x] **Exposure dashboard** — Per-symbol exposure + Herfindahl concentration index; GET `/api/v1/risk/exposure` (S46)
@@ -32,6 +32,7 @@
 - [x] **Demo recorder** — `scripts/record_demo.py` captures all 5 demo steps; output in `docs/demo-screenshots/` (S49)
 - [x] **Demo HTML page** — `docs/demo.html` with embedded data for all 5 steps, judge-friendly terminal theme (S50)
 - [x] **render.yaml deploy config** — Configured for Render.com deployment with health check path (S49)
+- [x] **Server updated to S50** — Live server at port 8084 reports version S50, 6185 tests (S51)
 
 ## Differentiators
 

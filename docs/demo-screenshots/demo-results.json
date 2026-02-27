@@ -5,12 +5,12 @@
     "response": {
       "status": "ok",
       "service": "ERC-8004 Demo Server",
-      "version": "S47",
-      "sprint": "S47",
-      "tests": 6121,
-      "test_count": 6121,
+      "version": "S50",
+      "sprint": "S50",
+      "tests": 6185,
+      "test_count": 6185,
       "port": 8084,
-      "uptime_s": 6.2,
+      "uptime_s": 29.2,
       "dev_mode": true,
       "highlights": [
         "Portfolio risk engine (VaR 95/99%)",
@@ -33,7 +33,7 @@
           "strategy": "momentum",
           "stake": 12.0,
           "vote": "BUY",
-          "confidence": 0.777,
+          "confidence": 0.767,
           "agrees": true
         },
         {
@@ -41,7 +41,7 @@
           "strategy": "mean_revert",
           "stake": 10.0,
           "vote": "SELL",
-          "confidence": 0.69,
+          "confidence": 0.626,
           "agrees": false
         },
         {
@@ -49,7 +49,7 @@
           "strategy": "arb",
           "stake": 11.0,
           "vote": "BUY",
-          "confidence": 0.676,
+          "confidence": 0.748,
           "agrees": true
         },
         {
@@ -57,7 +57,7 @@
           "strategy": "trend",
           "stake": 9.0,
           "vote": "BUY",
-          "confidence": 0.771,
+          "confidence": 0.726,
           "agrees": true
         },
         {
@@ -65,39 +65,39 @@
           "strategy": "contrarian",
           "stake": 8.0,
           "vote": "SELL",
-          "confidence": 0.625,
+          "confidence": 0.764,
           "agrees": false
         },
         {
           "agent_id": "quant-6",
           "strategy": "hybrid",
           "stake": 10.0,
-          "vote": "BUY",
-          "confidence": 0.527,
-          "agrees": true
+          "vote": "SELL",
+          "confidence": 0.53,
+          "agrees": false
         },
         {
           "agent_id": "quant-7",
           "strategy": "momentum",
           "stake": 11.0,
           "vote": "BUY",
-          "confidence": 0.743,
+          "confidence": 0.721,
           "agrees": true
         },
         {
           "agent_id": "quant-8",
           "strategy": "trend",
           "stake": 9.5,
-          "vote": "SELL",
-          "confidence": 0.568,
-          "agrees": false
+          "vote": "BUY",
+          "confidence": 0.539,
+          "agrees": true
         },
         {
           "agent_id": "quant-9",
           "strategy": "mean_revert",
           "stake": 8.5,
           "vote": "SELL",
-          "confidence": 0.672,
+          "confidence": 0.576,
           "agrees": false
         },
         {
@@ -105,7 +105,7 @@
           "strategy": "contrarian",
           "stake": 10.0,
           "vote": "SELL",
-          "confidence": 0.638,
+          "confidence": 0.721,
           "agrees": false
         }
       ],
@@ -115,12 +115,12 @@
       },
       "agree_count": 5,
       "total_agents": 10,
-      "weighted_agree_fraction": 0.5354,
+      "weighted_agree_fraction": 0.5303,
       "consensus_threshold": 0.6666666666666666,
       "consensus_reached": false,
       "consensus_action": "HOLD",
       "total_stake": 99.0,
-      "voted_at": 1772175292.6380749,
+      "voted_at": 1772176147.8663528,
       "version": "S46"
     }
   },
@@ -129,72 +129,72 @@
     "status": "ok",
     "response": {
       "portfolio": {
-        "var_95": 0.042328,
-        "var_99": 0.055548,
-        "sharpe_ratio": 0.9955,
-        "sortino_ratio": 1.01,
-        "calmar_ratio": 1.9969,
-        "max_drawdown": 0.214974,
+        "var_95": 0.046077,
+        "var_99": 0.066059,
+        "sharpe_ratio": 0.1269,
+        "sortino_ratio": 0.1256,
+        "calmar_ratio": 0.3068,
+        "max_drawdown": 0.260062,
         "n_symbols": 4,
         "history_days": 252
       },
       "per_symbol": {
         "BTC-USD": {
-          "var_95": 0.058319,
-          "var_99": 0.08566,
-          "sharpe": 0.9204,
-          "sortino": 0.9206,
-          "calmar": 1.1332,
-          "max_drawdown": 0.483906
+          "var_95": 0.057967,
+          "var_99": 0.071992,
+          "sharpe": -0.8423,
+          "sortino": -0.8336,
+          "calmar": -0.8282,
+          "max_drawdown": 0.514172
         },
         "ETH-USD": {
-          "var_95": 0.066636,
-          "var_99": 0.105472,
-          "sharpe": 1.1445,
-          "sortino": 1.1498,
-          "calmar": 1.913,
-          "max_drawdown": 0.412161
+          "var_95": 0.06629,
+          "var_99": 0.089773,
+          "sharpe": 0.9181,
+          "sortino": 0.937,
+          "calmar": 1.4808,
+          "max_drawdown": 0.44113
         },
         "SOL-USD": {
-          "var_95": 0.087177,
-          "var_99": 0.125879,
-          "sharpe": -0.6946,
-          "sortino": -0.7274,
-          "calmar": -0.8457,
-          "max_drawdown": 0.686122
+          "var_95": 0.08628,
+          "var_99": 0.145156,
+          "sharpe": 0.1741,
+          "sortino": 0.1753,
+          "calmar": 0.273,
+          "max_drawdown": 0.650282
         },
         "MATIC-USD": {
-          "var_95": 0.112479,
-          "var_99": 0.15085,
-          "sharpe": 0.8435,
-          "sortino": 0.9144,
-          "calmar": 1.5509,
-          "max_drawdown": 0.619316
+          "var_95": 0.111197,
+          "var_99": 0.152484,
+          "sharpe": -0.1018,
+          "sortino": -0.1014,
+          "calmar": -0.1128,
+          "max_drawdown": 0.760404
         }
       },
       "correlation_matrix": {
         "BTC-USD": {
           "BTC-USD": 1.0,
-          "ETH-USD": 0.0167,
-          "SOL-USD": -0.0216,
-          "MATIC-USD": -0.0424
+          "ETH-USD": 0.0447,
+          "SOL-USD": -0.0413,
+          "MATIC-USD": 0.0987
         },
         "ETH-USD": {
-          "BTC-USD": 0.0167,
+          "BTC-USD": 0.0447,
           "ETH-USD": 1.0,
-          "SOL-USD": -0.0027,
-          "MATIC-USD": -0.0041
+          "SOL-USD": 0.0307,
+          "MATIC-USD": 0.1303
         },
         "SOL-USD": {
-          "BTC-USD": -0.0216,
-          "ETH-USD": -0.0027,
+          "BTC-USD": -0.0413,
+          "ETH-USD": 0.0307,
           "SOL-USD": 1.0,
-          "MATIC-USD": -0.0256
+          "MATIC-USD": -0.0462
         },
         "MATIC-USD": {
-          "BTC-USD": -0.0424,
-          "ETH-USD": -0.0041,
-          "SOL-USD": -0.0256,
+          "BTC-USD": 0.0987,
+          "ETH-USD": 0.1303,
+          "SOL-USD": -0.0462,
           "MATIC-USD": 1.0
         }
       },
@@ -204,7 +204,7 @@
         "SOL-USD",
         "MATIC-USD"
       ],
-      "generated_at": 1772175292.6454248,
+      "generated_at": 1772176147.87645,
       "version": "S46"
     }
   },
@@ -230,27 +230,27 @@
     "status": "ok",
     "response": {
       "showcase": "ERC-8004 Full Pipeline",
-      "version": "S47",
-      "total_duration_ms": 6.26,
+      "version": "S50",
+      "total_duration_ms": 5.68,
       "steps": [
         {
           "step": 1,
           "label": "Live Price Tick \u2014 BTC-USD",
-          "duration_ms": 0.06,
+          "duration_ms": 0.05,
           "result": {
             "symbol": "BTC-USD",
-            "price": 68046.75,
-            "bid": 68036.54,
-            "ask": 68058.55,
-            "volume_24h": 18711.01,
-            "change_24h_pct": -0.608,
+            "price": 67517.18,
+            "bid": 67506.85,
+            "ask": 67536.52,
+            "volume_24h": 20709.5,
+            "change_24h_pct": -0.538,
             "source": "demo_feed"
           }
         },
         {
           "step": 2,
           "label": "10-Agent Swarm Vote \u2014 LONG BTC-USD",
-          "duration_ms": 0.17,
+          "duration_ms": 0.11,
           "result": {
             "total_agents": 10,
             "agree_count": 6,
@@ -266,15 +266,15 @@
         {
           "step": 3,
           "label": "Risk Engine \u2014 VaR 95/99% + Kelly Position Size",
-          "duration_ms": 6.01,
+          "duration_ms": 5.5,
           "result": {
-            "portfolio_var_95": 0.042328,
-            "portfolio_var_99": 0.055548,
-            "portfolio_sharpe": 0.9955,
-            "btc_recommended_position_usd": 55852.0,
-            "btc_position_pct_of_capital": 0.5585,
+            "portfolio_var_95": 0.046077,
+            "portfolio_var_99": 0.066059,
+            "portfolio_sharpe": 0.1269,
+            "btc_recommended_position_usd": 59288.59,
+            "btc_position_pct_of_capital": 0.5929,
             "sizing_method": "volatility",
-            "rationale": "Risk budget $2000.00 / daily vol 0.0358"
+            "rationale": "Risk budget $2000.00 / daily vol 0.0337"
           }
         },
         {
@@ -282,13 +282,13 @@
           "label": "Paper Trade Execution \u2014 Consensus Decision",
           "duration_ms": 0.01,
           "result": {
-            "trade_id": "s47-showcase-1772175292",
+            "trade_id": "s47-showcase-1772176147",
             "symbol": "BTC-USD",
             "side": "HOLD",
-            "qty": 0.820912,
-            "fill_price": 68036.54,
-            "position_usd": 55852.0,
-            "fee_usd": 27.926,
+            "qty": 0.87826,
+            "fill_price": 67506.85,
+            "position_usd": 59288.59,
+            "fee_usd": 29.6443,
             "slippage_pct": 0.05,
             "mode": "paper",
             "driven_by": "swarm_consensus",
@@ -297,14 +297,14 @@
         }
       ],
       "summary": {
-        "btc_price": 68046.75,
+        "btc_price": 67517.18,
         "swarm_consensus": "HOLD",
         "consensus_agents": "6/10",
-        "var_95": 0.042328,
-        "position_usd": 55852.0,
-        "trade_executed": "s47-showcase-1772175292"
+        "var_95": 0.046077,
+        "position_usd": 59288.59,
+        "trade_executed": "s47-showcase-1772176147"
       },
-      "generated_at": 1772175292.658732
+      "generated_at": 1772176147.8898377
     }
   }
 ]

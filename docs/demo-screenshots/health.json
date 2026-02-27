@@ -1,12 +1,12 @@
 {
   "status": "ok",
   "service": "ERC-8004 Demo Server",
-  "version": "S47",
-  "sprint": "S47",
-  "tests": 6121,
-  "test_count": 6121,
+  "version": "S50",
+  "sprint": "S50",
+  "tests": 6185,
+  "test_count": 6185,
   "port": 8084,
-  "uptime_s": 6.2,
+  "uptime_s": 29.2,
   "dev_mode": true,
   "highlights": [
     "Portfolio risk engine (VaR 95/99%)",

@@ -1,26 +1,26 @@
 {
   "showcase": "ERC-8004 Full Pipeline",
-  "version": "S47",
-  "total_duration_ms": 6.26,
+  "version": "S50",
+  "total_duration_ms": 5.68,
   "steps": [
     {
       "step": 1,
       "label": "Live Price Tick \u2014 BTC-USD",
-      "duration_ms": 0.06,
+      "duration_ms": 0.05,
       "result": {
         "symbol": "BTC-USD",
-        "price": 68046.75,
-        "bid": 68036.54,
-        "ask": 68058.55,
-        "volume_24h": 18711.01,
-        "change_24h_pct": -0.608,
+        "price": 67517.18,
+        "bid": 67506.85,
+        "ask": 67536.52,
+        "volume_24h": 20709.5,
+        "change_24h_pct": -0.538,
         "source": "demo_feed"
       }
     },
     {
       "step": 2,
       "label": "10-Agent Swarm Vote \u2014 LONG BTC-USD",
-      "duration_ms": 0.17,
+      "duration_ms": 0.11,
       "result": {
         "total_agents": 10,
         "agree_count": 6,
@@ -36,15 +36,15 @@
     {
       "step": 3,
       "label": "Risk Engine \u2014 VaR 95/99% + Kelly Position Size",
-      "duration_ms": 6.01,
+      "duration_ms": 5.5,
       "result": {
-        "portfolio_var_95": 0.042328,
-        "portfolio_var_99": 0.055548,
-        "portfolio_sharpe": 0.9955,
-        "btc_recommended_position_usd": 55852.0,
-        "btc_position_pct_of_capital": 0.5585,
+        "portfolio_var_95": 0.046077,
+        "portfolio_var_99": 0.066059,
+        "portfolio_sharpe": 0.1269,
+        "btc_recommended_position_usd": 59288.59,
+        "btc_position_pct_of_capital": 0.5929,
         "sizing_method": "volatility",
-        "rationale": "Risk budget $2000.00 / daily vol 0.0358"
+        "rationale": "Risk budget $2000.00 / daily vol 0.0337"
       }
     },
     {
@@ -52,13 +52,13 @@
       "label": "Paper Trade Execution \u2014 Consensus Decision",
       "duration_ms": 0.01,
       "result": {
-        "trade_id": "s47-showcase-1772175292",
+        "trade_id": "s47-showcase-1772176147",
         "symbol": "BTC-USD",
         "side": "HOLD",
-        "qty": 0.820912,
-        "fill_price": 68036.54,
-        "position_usd": 55852.0,
-        "fee_usd": 27.926,
+        "qty": 0.87826,
+        "fill_price": 67506.85,
+        "position_usd": 59288.59,
+        "fee_usd": 29.6443,
         "slippage_pct": 0.05,
         "mode": "paper",
         "driven_by": "swarm_consensus",
@@ -67,12 +67,12 @@
     }
   ],
   "summary": {
-    "btc_price": 68046.75,
+    "btc_price": 67517.18,
     "swarm_consensus": "HOLD",
     "consensus_agents": "6/10",
-    "var_95": 0.042328,
-    "position_usd": 55852.0,
-    "trade_executed": "s47-showcase-1772175292"
+    "var_95": 0.046077,
+    "position_usd": 59288.59,
+    "trade_executed": "s47-showcase-1772176147"
   },
-  "generated_at": 1772175292.658732
+  "generated_at": 1772176147.8898377
 }

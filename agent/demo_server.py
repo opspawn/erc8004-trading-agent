@@ -59,10 +59,11 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S47"
+SERVER_VERSION = "S50"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
+_S50_TEST_COUNT = 6185  # verified: full suite after S50 (demo HTML + submission)
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -6885,8 +6886,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
                 "sprint": SERVER_VERSION,
-                "tests": _S48_TEST_COUNT,
-                "test_count": _S48_TEST_COUNT,
+                "tests": _S50_TEST_COUNT,
+                "test_count": _S50_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
