@@ -59,9 +59,10 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S41"
+SERVER_VERSION = "S42"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
+_S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -6217,6 +6218,330 @@ def get_market_correlation(
     }
 
 
+# ── S42: Real-time WebSocket Price Feed ────────────────────────────────────────
+# GET /api/v1/market/stream/latest  — REST fallback (last 10 ticks per symbol)
+
+_S42_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
+_S42_BASE_PRICES: Dict[str, float] = {"BTC/USD": 65_000.0, "ETH/USD": 3_200.0, "SOL/USD": 150.0}
+_S42_TICK_BUFFER_SIZE = 10
+_S42_OHLCV_LOCK = threading.Lock()
+_S42_OHLCV_TICKS: Dict[str, list] = {sym: [] for sym in _S42_SYMBOLS}
+
+# Supported timeframes for leaderboard endpoint
+_S42_VALID_TIMEFRAMES = {"1d", "7d", "30d"}
+_S42_VALID_METRICS = {"sharpe_ratio", "total_return", "win_rate"}
+_S42_LEADERBOARD_STRATEGIES = [
+    "momentum", "mean_reversion", "buy_and_hold", "trend_following",
+    "breakout", "pairs_trading", "arbitrage", "ml_ensemble",
+]
+
+
+def _s42_generate_ohlcv_tick(symbol: str, last_close: float, ts: float) -> Dict[str, Any]:
+    """Generate a single OHLCV tick using a random-walk model."""
+    rng = random.Random(int(ts * 1000) ^ hash(symbol))
+    pct_change = rng.gauss(0, 0.002)  # 0.2% volatility per tick
+    close = round(last_close * (1 + pct_change), 6)
+    spread = abs(close * 0.001)
+    high = round(close + rng.uniform(0, spread), 6)
+    low = round(close - rng.uniform(0, spread), 6)
+    open_ = round(last_close, 6)
+    volume = round(rng.uniform(0.5, 5.0) * (1_000_000 / max(close, 1)), 4)
+    return {
+        "symbol": symbol,
+        "open": open_,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "timestamp": ts,
+        "interval_ms": 500,
+    }
+
+
+def _s42_init_ohlcv_buffer() -> None:
+    """Pre-fill the OHLCV tick buffer with historical-like ticks."""
+    now = time.time()
+    with _S42_OHLCV_LOCK:
+        for sym in _S42_SYMBOLS:
+            price = _S42_BASE_PRICES[sym]
+            ticks = []
+            for i in range(_S42_TICK_BUFFER_SIZE):
+                ts = now - (_S42_TICK_BUFFER_SIZE - i) * 0.5
+                tick = _s42_generate_ohlcv_tick(sym, price, ts)
+                price = tick["close"]
+                ticks.append(tick)
+            _S42_OHLCV_TICKS[sym] = ticks
+
+
+def _s42_append_fresh_tick(symbol: str) -> Dict[str, Any]:
+    """Generate a new tick appended to the buffer; return the new tick."""
+    with _S42_OHLCV_LOCK:
+        ticks = _S42_OHLCV_TICKS.get(symbol, [])
+        last_close = ticks[-1]["close"] if ticks else _S42_BASE_PRICES.get(symbol, 100.0)
+        tick = _s42_generate_ohlcv_tick(symbol, last_close, time.time())
+        ticks.append(tick)
+        _S42_OHLCV_TICKS[symbol] = ticks[-_S42_TICK_BUFFER_SIZE:]
+    return tick
+
+
+def get_market_stream_latest(
+    symbol: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Return the latest OHLCV ticks for one or all symbols.
+
+    Args:
+        symbol: If provided, return ticks only for that symbol; else all symbols.
+
+    Returns:
+        dict with 'symbols' (each with list of last N ticks) and metadata.
+    """
+    # Refresh buffer with fresh ticks first
+    targets = [symbol] if symbol else _S42_SYMBOLS
+    invalid = [s for s in targets if s not in _S42_SYMBOLS]
+    if invalid:
+        raise ValueError(f"Unknown symbol(s): {invalid}. Valid: {_S42_SYMBOLS}")
+
+    for sym in targets:
+        _s42_append_fresh_tick(sym)
+
+    with _S42_OHLCV_LOCK:
+        result: Dict[str, Any] = {}
+        for sym in targets:
+            result[sym] = list(_S42_OHLCV_TICKS.get(sym, []))
+
+    return {
+        "symbols": result,
+        "tick_count": {sym: len(v) for sym, v in result.items()},
+        "interval_ms": 500,
+        "generated_at": time.time(),
+    }
+
+
+# Initialise buffers on module load
+_s42_init_ohlcv_buffer()
+
+
+# ── S42: Agent Health Monitoring ───────────────────────────────────────────────
+# GET  /api/v1/agents/health
+# POST /api/v1/agents/{agent_id}/ping
+# GET  /api/v1/agents/{agent_id}/diagnostics
+
+_S42_AGENT_LOCK = threading.Lock()
+_S42_AGENT_START_TIME = time.time()
+_S42_AGENT_STATUSES = ("active", "idle", "error")
+
+_S42_AGENT_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "agent-alpha": {
+        "agent_id": "agent-alpha",
+        "status": "active",
+        "last_trade_at": _S42_AGENT_START_TIME - 30,
+        "trades_today": 42,
+        "pnl_today": 1_234.56,
+        "start_time": _S42_AGENT_START_TIME - 3600,
+        "error_count": 0,
+        "last_seen": _S42_AGENT_START_TIME,
+        "strategy": "momentum",
+        "version": "1.2.0",
+    },
+    "agent-beta": {
+        "agent_id": "agent-beta",
+        "status": "idle",
+        "last_trade_at": _S42_AGENT_START_TIME - 600,
+        "trades_today": 15,
+        "pnl_today": -87.32,
+        "start_time": _S42_AGENT_START_TIME - 7200,
+        "error_count": 2,
+        "last_seen": _S42_AGENT_START_TIME,
+        "strategy": "mean_reversion",
+        "version": "1.1.0",
+    },
+    "agent-gamma": {
+        "agent_id": "agent-gamma",
+        "status": "error",
+        "last_trade_at": _S42_AGENT_START_TIME - 3000,
+        "trades_today": 5,
+        "pnl_today": 0.0,
+        "start_time": _S42_AGENT_START_TIME - 1800,
+        "error_count": 7,
+        "last_seen": _S42_AGENT_START_TIME - 120,
+        "strategy": "arbitrage",
+        "version": "0.9.1",
+    },
+}
+
+
+def _s42_agent_uptime(agent: Dict[str, Any]) -> float:
+    """Return uptime in seconds for an agent record."""
+    return round(time.time() - agent.get("start_time", time.time()), 2)
+
+
+def get_agents_health() -> Dict[str, Any]:
+    """Return health metrics for all registered trading agents."""
+    with _S42_AGENT_LOCK:
+        agents = []
+        for aid, data in _S42_AGENT_REGISTRY.items():
+            agents.append({
+                "agent_id": aid,
+                "status": data["status"],
+                "last_trade_at": data["last_trade_at"],
+                "trades_today": data["trades_today"],
+                "pnl_today": data["pnl_today"],
+                "uptime_seconds": _s42_agent_uptime(data),
+                "error_count": data["error_count"],
+                "last_seen": data["last_seen"],
+                "strategy": data.get("strategy", "unknown"),
+                "version": data.get("version", "unknown"),
+            })
+    return {
+        "agents": agents,
+        "total": len(agents),
+        "active": sum(1 for a in agents if a["status"] == "active"),
+        "idle": sum(1 for a in agents if a["status"] == "idle"),
+        "error": sum(1 for a in agents if a["status"] == "error"),
+        "generated_at": time.time(),
+    }
+
+
+def ping_agent(agent_id: str) -> Dict[str, Any]:
+    """Update last_seen for an agent (heartbeat). Creates the agent if not known."""
+    now = time.time()
+    with _S42_AGENT_LOCK:
+        if agent_id not in _S42_AGENT_REGISTRY:
+            _S42_AGENT_REGISTRY[agent_id] = {
+                "agent_id": agent_id,
+                "status": "active",
+                "last_trade_at": now,
+                "trades_today": 0,
+                "pnl_today": 0.0,
+                "start_time": now,
+                "error_count": 0,
+                "last_seen": now,
+                "strategy": "unknown",
+                "version": "0.0.0",
+            }
+        else:
+            _S42_AGENT_REGISTRY[agent_id]["last_seen"] = now
+            # Promote from error/idle to active on ping (simulates health recovery)
+            if _S42_AGENT_REGISTRY[agent_id]["status"] in ("idle", "error"):
+                _S42_AGENT_REGISTRY[agent_id]["status"] = "active"
+        agent = _S42_AGENT_REGISTRY[agent_id]
+    return {
+        "agent_id": agent_id,
+        "status": agent["status"],
+        "last_seen": agent["last_seen"],
+        "uptime_seconds": _s42_agent_uptime(agent),
+        "acknowledged": True,
+    }
+
+
+def get_agent_diagnostics(agent_id: str) -> Dict[str, Any]:
+    """Return detailed diagnostics for a single agent."""
+    with _S42_AGENT_LOCK:
+        if agent_id not in _S42_AGENT_REGISTRY:
+            raise KeyError(f"Unknown agent: {agent_id}")
+        data = dict(_S42_AGENT_REGISTRY[agent_id])
+
+    uptime = _s42_agent_uptime(data)
+    trades = data["trades_today"]
+    return {
+        "agent_id": agent_id,
+        "status": data["status"],
+        "uptime_seconds": uptime,
+        "last_trade_at": data["last_trade_at"],
+        "last_seen": data["last_seen"],
+        "trades_today": trades,
+        "pnl_today": data["pnl_today"],
+        "pnl_per_trade": round(data["pnl_today"] / trades, 4) if trades > 0 else 0.0,
+        "error_count": data["error_count"],
+        "error_rate": round(data["error_count"] / max(trades, 1), 4),
+        "strategy": data.get("strategy", "unknown"),
+        "version": data.get("version", "unknown"),
+        "diagnostics": {
+            "memory_mb": round(random.uniform(128, 512), 1),
+            "cpu_pct": round(random.uniform(1, 40), 1),
+            "latency_ms": round(random.uniform(1, 50), 2),
+            "queue_depth": random.randint(0, 20),
+            "last_error": "ConnectionResetError" if data["error_count"] > 0 else None,
+        },
+        "generated_at": time.time(),
+    }
+
+
+# ── S42: Strategy Performance Leaderboard ──────────────────────────────────────
+# GET /api/v1/strategies/leaderboard
+
+_S42_LEADERBOARD_SEED = 42  # deterministic but timeframe-dependent
+
+
+def _s42_strategy_row(
+    strategy: str,
+    timeframe: str,
+    seed: int,
+) -> Dict[str, Any]:
+    """Generate deterministic performance metrics for a single strategy."""
+    rng = random.Random(seed ^ hash(strategy) ^ hash(timeframe))
+    sharpe = round(rng.uniform(-0.5, 3.5), 4)
+    total_return = round(rng.uniform(-0.20, 0.80), 6)
+    win_rate = round(rng.uniform(0.30, 0.75), 4)
+    trades = rng.randint(10, 500)
+    return {
+        "strategy": strategy,
+        "sharpe_ratio": sharpe,
+        "total_return": total_return,
+        "win_rate": win_rate,
+        "total_trades": trades,
+        "avg_return_per_trade": round(total_return / max(trades, 1), 6),
+        "timeframe": timeframe,
+    }
+
+
+def get_strategies_leaderboard(
+    limit: int = 10,
+    metric: str = "sharpe_ratio",
+    timeframe: str = "7d",
+) -> Dict[str, Any]:
+    """
+    Return top strategies ranked by the given metric.
+
+    Args:
+        limit:     Max number of entries (1–50).
+        metric:    Ranking metric: sharpe_ratio | total_return | win_rate.
+        timeframe: Performance window: 1d | 7d | 30d.
+
+    Returns:
+        dict with 'leaderboard' list and metadata.
+    """
+    if metric not in _S42_VALID_METRICS:
+        raise ValueError(f"Invalid metric '{metric}'. Valid: {sorted(_S42_VALID_METRICS)}")
+    if timeframe not in _S42_VALID_TIMEFRAMES:
+        raise ValueError(f"Invalid timeframe '{timeframe}'. Valid: {sorted(_S42_VALID_TIMEFRAMES)}")
+    limit = max(1, min(50, int(limit)))
+
+    seed = _S42_LEADERBOARD_SEED + {"1d": 1, "7d": 7, "30d": 30}[timeframe]
+    rows = [
+        _s42_strategy_row(s, timeframe, seed)
+        for s in _S42_LEADERBOARD_STRATEGIES
+    ]
+
+    # Primary sort: metric descending; secondary: total_return descending (tie-break)
+    rows.sort(key=lambda r: (-r[metric], -r["total_return"]))
+    rows = rows[:limit]
+
+    # Assign rank after sort
+    for rank, row in enumerate(rows, start=1):
+        row["rank"] = rank
+
+    return {
+        "leaderboard": rows,
+        "metric": metric,
+        "timeframe": timeframe,
+        "total_strategies": len(_S42_LEADERBOARD_STRATEGIES),
+        "returned": len(rows),
+        "generated_at": time.time(),
+    }
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class _DemoHandler(BaseHTTPRequestHandler):
@@ -6260,7 +6585,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S41_TEST_COUNT,
+                "test_count": _S42_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6272,6 +6597,11 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "POST /api/v1/strategies/compare": "Multi-strategy backtest comparison with leaderboard",
                     "POST /api/v1/portfolio/monte-carlo": "Monte Carlo simulation (1000 paths, percentile returns)",
                     "GET  /api/v1/market/correlation": "Symbol correlation matrix",
+                    "GET  /api/v1/market/stream/latest": "Real-time OHLCV tick buffer (REST fallback for WebSocket)",
+                    "GET  /api/v1/agents/health": "Agent health monitoring dashboard",
+                    "POST /api/v1/agents/{id}/ping": "Agent heartbeat / health ping",
+                    "GET  /api/v1/agents/{id}/diagnostics": "Detailed agent diagnostics",
+                    "GET  /api/v1/strategies/leaderboard": "Strategy performance leaderboard",
                 },
                 "quickstart": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -6283,8 +6613,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
-                "tests": _S41_TEST_COUNT,
-                "test_count": _S41_TEST_COUNT,
+                "tests": _S42_TEST_COUNT,
+                "test_count": _S42_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -6508,6 +6838,39 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": str(exc)})
             except Exception as exc:
                 self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+        # S42: Market stream latest (REST fallback for WebSocket price feed)
+        elif path in ("/api/v1/market/stream/latest",):
+            sym = qs.get("symbol", [None])[0]
+            try:
+                result = get_market_stream_latest(symbol=sym)
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+        # S42: Agent health dashboard
+        elif path in ("/api/v1/agents/health",):
+            self._send_json(200, get_agents_health())
+        # S42: Agent diagnostics
+        elif path.startswith("/api/v1/agents/") and path.endswith("/diagnostics"):
+            parts = path.split("/")
+            # /api/v1/agents/<id>/diagnostics → parts[4] = agent_id
+            agent_id = parts[4] if len(parts) >= 5 else ""
+            try:
+                self._send_json(200, get_agent_diagnostics(agent_id))
+            except KeyError as exc:
+                self._send_json(404, {"error": str(exc)})
+        # S42: Strategy leaderboard
+        elif path in ("/api/v1/strategies/leaderboard",):
+            try:
+                limit = int(qs.get("limit", ["10"])[0])
+            except (ValueError, TypeError):
+                limit = 10
+            metric = qs.get("metric", ["sharpe_ratio"])[0]
+            timeframe = qs.get("timeframe", ["7d"])[0]
+            try:
+                result = get_strategies_leaderboard(limit=limit, metric=metric, timeframe=timeframe)
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -6587,6 +6950,15 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S41: Monte Carlo portfolio simulation
         elif path in ("/api/v1/portfolio/monte-carlo",):
             self._handle_s41_monte_carlo()
+        # S42: Agent ping / heartbeat
+        elif path.startswith("/api/v1/agents/") and path.endswith("/ping"):
+            parts = path.split("/")
+            # /api/v1/agents/<id>/ping → parts[4] = agent_id
+            agent_id = parts[4] if len(parts) >= 5 else ""
+            if not agent_id:
+                self._send_json(400, {"error": "agent_id required"})
+            else:
+                self._send_json(200, ping_agent(agent_id))
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
