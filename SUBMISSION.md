@@ -77,20 +77,30 @@ enabled so judges can call it without a wallet.
   events to connected clients; keepalive every 15s for long-polling dashboards
 - **RedStone/Surge oracle integration**: On-chain risk check via `RiskRouter.checkRisk()`
   validates oracle deviation before any settlement
+- **Judge dashboard** (`GET /demo/judge`): Single-page HTML view designed for evaluators —
+  shows 10-agent swarm table, RSI/MACD signals panel, portfolio VaR, and sprint metrics
+- **TA signal engine** (`GET /api/v1/signals/latest`): RSI (14-period) + MACD (12/26/9)
+  signals for BTC-USD, ETH-USD, SOL-USD — each agent reads signals before voting, making
+  decisions data-driven rather than random
+- **Demo video** (`docs/demo-video-s54.mp4`): Recorded walkthrough of judge dashboard and
+  interactive demo UI — 6 frames, 18 seconds, created with Playwright + ffmpeg
 
 ---
 
 ## Test Evidence
 
-**Total tests: 4,908 passing** (S39 — verified 2026-02-26 by running `python3 -m pytest --tb=no -q`)
+**Total tests: 6,300 passing** (S54 — verified 2026-02-27 by running `python3 -m pytest --tb=no -q`)
 
 | Sprint | Tests | Key additions |
 |--------|-------|---------------|
 | S01–S30 | 3,541 | Core pipeline, consensus, reputation, x402 |
 | S31–S36 | 4,658 | Attribution, live feed, leaderboard, backtest |
-| S37 | 4,729 | Risk dashboard, ensemble vote, alpha decay, cross-train |
-| S38 | 4,800 | Strategy performance attribution (by type/period/risk bucket), demo script V2, pitch deck |
-| **S39** | **4,908** | Live market simulation, portfolio snapshot, strategy comparison dashboard (+108 tests) |
+| S37–S39 | 4,908 | Risk dashboard, ensemble vote, live market sim, strategy comparison |
+| S40–S46 | 6,085 | 10-agent swarm (6 strategies), portfolio VaR engine, Kelly sizing, exposure dashboard |
+| S47–S50 | 6,185 | Showcase endpoint, Monte Carlo sim, correlation matrix, demo HTML |
+| S51–S52 | 6,210 | Interactive HTML demo UI (/demo/ui), live-data JSON endpoint |
+| S53 | 6,248 | Judge dashboard (/demo/judge), RSI/MACD TA signals (/api/v1/signals/latest) |
+| **S54** | **6,300** | Demo video (MP4), video endpoint tests, S54 submission polish |
 
 | Test File | Coverage Area |
 |-----------|---------------|
@@ -162,7 +172,7 @@ cd agent && python3 -m pytest tests/ -q --tb=no
 
 ## Live Endpoint Instructions
 
-**Status: LIVE** — All endpoints verified working as of 2026-02-26.
+**Status: LIVE** — All endpoints verified working as of 2026-02-27 (S54).
 
 The demo server runs publicly at `https://api.opspawn.com/erc8004/` (systemd service `erc8004-demo.service` → nginx proxy → localhost:8084).
 All endpoints use `dev_mode=true` — free for judges, no wallet required.

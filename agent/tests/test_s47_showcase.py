@@ -75,7 +75,9 @@ class TestShowcaseReturnsAll4Steps:
 
     def test_version_field_is_s46(self):
         result = get_s47_showcase()
-        assert result.get("version") in ("S46", "S47", "S48")
+        version = result.get("version", "")
+        sprint_num = int(version[1:]) if version and version[1:].isdigit() else 0
+        assert sprint_num >= 46
 
     def test_total_duration_ms_present(self):
         result = get_s47_showcase()

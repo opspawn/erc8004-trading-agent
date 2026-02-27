@@ -553,7 +553,8 @@ class TestS44LeaderboardHTTP:
 
 class TestS44Constants:
     def test_server_version_is_s44(self):
-        assert SERVER_VERSION in ("S44", "S45", "S46", "S47", "S48")
+        sprint_num = int(SERVER_VERSION[1:]) if SERVER_VERSION[1:].isdigit() else 0
+        assert sprint_num >= 44
 
     def test_s44_test_count_defined(self):
         assert _S44_TEST_COUNT is not None

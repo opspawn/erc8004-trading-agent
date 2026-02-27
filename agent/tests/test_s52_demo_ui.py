@@ -274,19 +274,23 @@ class TestServerVersionS52:
     """Server must report S52 version and updated test count."""
 
     def test_health_version_is_s52(self):
-        """Health endpoint reports version S52."""
+        """Health endpoint reports version S52 or later."""
         try:
             data = _get("/demo/health")
-            assert data.get("version") == "S52", \
-                f"Expected S52 but got {data.get('version')}"
+            version = data.get("version", "")
+            sprint_num = int(version[1:]) if version and version[1:].isdigit() else 0
+            assert sprint_num >= 52, \
+                f"Expected S52 or later but got {version}"
         except urllib.error.URLError:
             pytest.skip("Server not running on port 8084")
 
     def test_health_sprint_is_s52(self):
-        """Health endpoint reports sprint S52."""
+        """Health endpoint reports sprint S52 or later."""
         try:
             data = _get("/demo/health")
-            assert data.get("sprint") == "S52", \
-                f"Expected sprint S52 but got {data.get('sprint')}"
+            sprint = data.get("sprint", "")
+            sprint_num = int(sprint[1:]) if sprint and sprint[1:].isdigit() else 0
+            assert sprint_num >= 52, \
+                f"Expected sprint S52 or later but got {sprint}"
         except urllib.error.URLError:
             pytest.skip("Server not running on port 8084")

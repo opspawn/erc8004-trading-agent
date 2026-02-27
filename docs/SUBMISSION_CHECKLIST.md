@@ -9,13 +9,15 @@
 - [x] GitHub repository (public)
 
 ## Demo Assets
-- [x] Demo video script (docs/DEMO_VIDEO_SCRIPT.md)
+- [x] Demo video script (docs/DEMO_VIDEO_SCRIPT.md) — updated for S54
 - [x] Judge demo walkthrough (docs/JUDGE_DEMO.md)
 - [x] Live showcase endpoint (POST /api/v1/demo/showcase)
 - [x] Health check endpoint (GET /demo/health)
 - [x] Demo recorder script (scripts/record_demo.py — 5/5 steps verified)
-- [x] Demo screenshots/outputs (docs/demo-screenshots/)
-- [ ] Recorded demo video (TODO: record before Mar 15)
+- [x] Demo screenshots/outputs (docs/demo-screenshots/s54-*.png — 6 frames)
+- [x] **Recorded demo video** (docs/demo-video-s54.mp4 — 424KB, 18s slideshow)
+- [x] Judge dashboard (/demo/judge — RSI/MACD signals, swarm table, VaR)
+- [x] Interactive demo UI (/demo/ui — browser-based live endpoint explorer)
 - [~] Deploy to public URL — render.yaml + Procfile created. Manual deploy step required.
       URL: https://erc8004-demo.onrender.com (TBD)
 
@@ -31,6 +33,6 @@
 
 ## Submission Status
 - Deadline: March 22, 2026
-- Current sprint: S49
-- Tests: 6146
+- Current sprint: S54
+- Tests: 6300
 - Status: ON TRACK

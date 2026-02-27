@@ -1049,7 +1049,8 @@ class TestS42Integration:
     """Integration tests and version checks."""
 
     def test_server_version_is_s42(self):
-        assert SERVER_VERSION in ("S42", "S43", "S44", "S45", "S46", "S47", "S48")
+        sprint_num = int(SERVER_VERSION[1:]) if SERVER_VERSION[1:].isdigit() else 0
+        assert sprint_num >= 42
 
     def test_s42_test_count_defined(self):
         from demo_server import _S42_TEST_COUNT
@@ -1057,7 +1058,9 @@ class TestS42Integration:
 
     def test_root_returns_s42_version(self, live_server):
         data = _get(f"{live_server}/")
-        assert data.get("version") in ("S42", "S43", "S44", "S45", "S46", "S47", "S48")
+        version = data.get("version", "")
+        sprint_num = int(version[1:]) if version and version[1:].isdigit() else 0
+        assert sprint_num >= 42
 
     def test_health_endpoint_ok(self, live_server):
         data = _get(f"{live_server}/demo/health")

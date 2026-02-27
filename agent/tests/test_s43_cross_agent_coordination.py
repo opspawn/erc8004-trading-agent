@@ -140,7 +140,8 @@ def _clear_signal_buffer() -> None:
 
 class TestS43Constants:
     def test_server_version_is_s43(self):
-        assert SERVER_VERSION in ("S43", "S44", "S45", "S46", "S47", "S48")
+        sprint_num = int(SERVER_VERSION[1:]) if SERVER_VERSION[1:].isdigit() else 0
+        assert sprint_num >= 43
 
     def test_s43_test_count_defined(self):
         assert _S43_TEST_COUNT is not None

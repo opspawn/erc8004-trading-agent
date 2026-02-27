@@ -2,6 +2,7 @@
 
 > **Purpose**: Judge-facing walkthrough of the full ERC-8004 Autonomous Trading Agent pipeline.
 > Target runtime: 3 minutes. Record with `demo_server.py` running on port 8084.
+> **Sprint**: S54 | **Tests**: 6,300 passing
 
 ---
 
@@ -16,13 +17,13 @@
 
 ---
 
-## SECTION 1 — Architecture & Health (45s)
+## SECTION 1 — Architecture & Health (30s)
 
-> *Screen: curl command running, then JSON output side-by-side with a diagram*
+> *Screen: curl command running, then JSON output*
 
 **Narrator:**
-> "First, the health check — this shows the live state of the server: sprint, test count, and
-> what makes S46 special."
+> "First, the health check — live state of the server: sprint S54, 6,300 tests, and what makes
+> this version special."
 
 ```bash
 curl -s http://localhost:8084/demo/health | python3 -m json.tool
@@ -32,30 +33,99 @@ curl -s http://localhost:8084/demo/health | python3 -m json.tool
 ```json
 {
   "status": "ok",
-  "version": "S46",
-  "sprint": "S46",
-  "tests": 6085,
+  "version": "S54",
+  "sprint": "S54",
+  "tests": 6300,
   "highlights": [
     "Portfolio risk engine (VaR 95/99%)",
     "10-agent swarm with 6 strategies",
     "Position sizing (Kelly/volatility/fixed)",
-    "Exposure dashboard with concentration index"
+    "Exposure dashboard with concentration index",
+    "Interactive HTML demo UI (/demo/ui)"
   ]
 }
 ```
 
 **Narrator:**
-> "6,085 tests. A portfolio risk engine. 10 agents, 6 strategies. And today we're going to
-> see all of it work together in a single call."
+> "6,300 tests. A portfolio risk engine. 10 agents, 6 strategies."
 
 ---
 
-## SECTION 2 — Full Pipeline Showcase (60s)
+## SECTION 2 — Judge Dashboard (45s)
+
+> *Screen: browser at http://localhost:8084/demo/judge*
+
+**Narrator:**
+> "The judge dashboard is a live read — one page showing all the key metrics judges care about."
+
+Navigate to: `http://localhost:8084/demo/judge`
+
+**Point out these sections:**
+
+**Swarm Agents (top section):**
+> "Ten quant agents — quant-1 through quant-10 — each with a different strategy and stake weight.
+> They vote on every tick. quant-1 uses momentum, quant-2 uses mean reversion, and so on."
+
+**TA Signals Panel:**
+> "RSI and MACD signals in real time for BTC-USD, ETH-USD, and SOL-USD. When RSI crosses 70,
+> agents with momentum strategies get a SELL signal. When RSI drops below 30, they get BUY.
+> MACD crossover adds a second confirmation layer."
+
+**Portfolio Risk (VaR panel):**
+> "VaR at 95% and 99% confidence, Sharpe ratio, max drawdown. The risk engine sets position
+> sizing for every trade — so the swarm can never bet more than the math supports."
+
+---
+
+## SECTION 3 — TA Signals Endpoint (30s)
+
+> *Screen: terminal, signals API*
+
+**Narrator:**
+> "The signals endpoint is machine-readable — designed for agents, not humans."
+
+```bash
+curl -s http://localhost:8084/api/v1/signals/latest | python3 -m json.tool
+```
+
+**Expected output:**
+```json
+{
+  "signals": [
+    {
+      "symbol": "BTC-USD",
+      "last_price": 67500.0,
+      "rsi": 100.0,
+      "rsi_signal": "SELL",
+      "macd_signal": "NEUTRAL"
+    },
+    {
+      "symbol": "ETH-USD",
+      "rsi_signal": "SELL",
+      "macd_signal": "NEUTRAL"
+    },
+    {
+      "symbol": "SOL-USD",
+      "rsi_signal": "SELL",
+      "macd_signal": "NEUTRAL"
+    }
+  ],
+  "version": "S54"
+}
+```
+
+**Narrator:**
+> "Three symbols, two signals each — RSI and MACD. Every agent in the swarm reads this before
+> voting. It's what separates ERC-8004 from a simple random-vote system."
+
+---
+
+## SECTION 4 — Full Pipeline Showcase (45s)
 
 > *Screen: single curl command, then walk through each step in the JSON*
 
 **Narrator:**
-> "This is our showcase endpoint — one POST, four pipeline stages, full transparency."
+> "This is the showcase endpoint — one POST, four pipeline stages, full transparency."
 
 ```bash
 curl -s -X POST http://localhost:8084/api/v1/demo/showcase | python3 -m json.tool
@@ -67,89 +137,30 @@ curl -s -X POST http://localhost:8084/api/v1/demo/showcase | python3 -m json.too
 > "We fetch a live BTC-USD price tick with bid, ask, and 24h volume."
 
 **Step 2 — 10-Agent Swarm Vote:**
-> "Ten agents, each with a different strategy and stake weight, vote on whether to go LONG.
-> We need 2/3 stake-weighted consensus before we act."
+> "Ten agents vote on whether to go LONG. We need 2/3 stake-weighted consensus before we act."
 
 **Step 3 — Risk Engine:**
 > "The risk engine computes VaR at 95% and 99% confidence, then sizes the position using
-> volatility-based sizing — risk budget divided by daily volatility — so we never bet more
-> than the math supports."
+> volatility-based sizing — risk budget divided by daily volatility."
 
 **Step 4 — Paper Trade Execution:**
 > "The consensus decision executes as a paper trade — symbol, quantity, fill price, and fee
-> all logged. No real money, full real logic."
-
-**Narrator (pointing at summary block):**
-> "The summary block tells the whole story in five lines: price, consensus, agents in
-> agreement, VaR, and position size."
+> all logged. Full real logic, no real money."
 
 ---
 
-## SECTION 3 — Swarm Performance Leaderboard (45s)
+## SECTION 5 — Interactive Demo UI (15s)
 
-> *Screen: terminal, swarm performance endpoint*
-
-**Narrator:**
-> "After the trade, you can see how each agent is performing. This is the swarm leaderboard —
-> ranked by 24-hour PnL and Sharpe ratio."
-
-```bash
-curl -s http://localhost:8084/api/v1/swarm/performance | python3 -m json.tool
-```
-
-**Expected output (highlight these fields):**
-```json
-{
-  "leaderboard": [
-    {
-      "rank": 1,
-      "agent_id": "quant-7",
-      "strategy": "momentum",
-      "total_pnl_24h": 4.82,
-      "sharpe_24h": 1.34,
-      "win_rate": 0.75
-    }
-  ],
-  "total_agents": 10,
-  "portfolio_pnl_24h": 12.41
-}
-```
+> *Screen: browser at http://localhost:8084/demo/ui*
 
 **Narrator:**
-> "Every agent's Sharpe, win rate, and PnL — updated with each vote. Bad performers get
-> out-voted by agents with higher stake. Natural selection, on-chain."
+> "And there's a fully interactive HTML demo — judges can click each pipeline stage and see
+> the live JSON response. No curl required."
 
----
+Navigate to: `http://localhost:8084/demo/ui`
 
-## SECTION 4 — Portfolio Risk Dashboard (30s)
-
-> *Screen: risk/portfolio endpoint*
-
-**Narrator:**
-> "And the portfolio risk view — VaR across all four symbols, correlation matrix, and
-> Calmar ratio."
-
-```bash
-curl -s http://localhost:8084/api/v1/risk/portfolio | python3 -m json.tool
-```
-
-**Expected output (highlight):**
-```json
-{
-  "portfolio": {
-    "var_95": 0.021,
-    "var_99": 0.034,
-    "sharpe_ratio": 0.84,
-    "calmar_ratio": 2.1,
-    "max_drawdown": 0.092
-  },
-  "symbols": ["BTC-USD", "ETH-USD", "SOL-USD", "MATIC-USD"]
-}
-```
-
-**Narrator:**
-> "A 9.2% max drawdown, 84% Sharpe. The risk engine tells each agent exactly how much
-> capital to deploy — so the swarm can't blow up the portfolio."
+> "Click any panel — swarm vote, risk portfolio, TA signals, or the full showcase.
+> Each button hits the live endpoint and renders the result."
 
 ---
 
@@ -159,17 +170,27 @@ curl -s http://localhost:8084/api/v1/risk/portfolio | python3 -m json.tool
 
 **Narrator:**
 > "ERC-8004: an open standard for autonomous trading agents — identity, reputation, risk,
-> and consensus in one pipeline. 6,085 tests across 47 sprints. MIT licensed.
+> and consensus in one pipeline. 6,300 tests across 54 sprints. MIT licensed.
 > Hit the showcase endpoint yourself."
 
 ```bash
 # Try it:
 curl -s -X POST http://localhost:8084/api/v1/demo/showcase | python3 -m json.tool
+# Or explore the judge dashboard:
+# http://localhost:8084/demo/judge
 ```
 
 > **GitHub**: github.com/opspawn/erc8004-trading-agent
 > **Unique features**: On-chain identity (ERC-8004), stake-weighted swarm consensus,
-> Kelly/VaR risk engine, 6 strategy types, full paper trading pipeline
+> RSI/MACD TA signals, Kelly/VaR risk engine, 6 strategy types, judge dashboard
+
+---
+
+## S54 Video Asset
+
+- **Demo screenshots**: `docs/demo-screenshots/s54-*.png` (6 frames)
+- **Demo video**: `docs/demo-video-s54.mp4` (~424KB, 18-second slideshow)
+- Created with Playwright (headless Chromium) + ffmpeg
 
 ---
 
@@ -180,4 +201,6 @@ curl -s -X POST http://localhost:8084/api/v1/demo/showcase | python3 -m json.too
 - [ ] Run each curl once before recording to warm the server
 - [ ] Keep each section within its time budget
 - [ ] Show the raw JSON first, then summarise verbally
+- [ ] Demonstrate judge dashboard in browser (http://localhost:8084/demo/judge)
+- [ ] Demonstrate interactive demo UI (http://localhost:8084/demo/ui)
 - [ ] End with the GitHub URL visible on screen

@@ -89,7 +89,8 @@ def server():
 
 class TestS40Constants:
     def test_server_version_is_s40(self):
-        assert SERVER_VERSION in ("S40", "S41", "S42", "S43", "S44", "S45", "S46", "S47", "S48")  # updated to S41
+        sprint_num = int(SERVER_VERSION[1:]) if SERVER_VERSION[1:].isdigit() else 0
+        assert sprint_num >= 40
 
     def test_test_count_is_4968(self):
         assert _S40_TEST_COUNT == 4968
@@ -130,7 +131,9 @@ class TestHealthEndpoint:
 
     def test_health_version_is_s40(self, server):
         data = _get(f"{server}/health")
-        assert data["version"] in ("S40", "S41", "S42", "S43", "S44", "S45", "S46", "S47", "S48")
+        version = data["version"]
+        sprint_num = int(version[1:]) if version and version[1:].isdigit() else 0
+        assert sprint_num >= 40
 
     def test_health_has_service_field(self, server):
         data = _get(f"{server}/health")
@@ -174,7 +177,8 @@ class TestHealthEndpoint:
     def test_health_erc8004_version_header(self, server):
         with urlopen(f"{server}/health", timeout=8) as resp:
             hdr = resp.headers.get("X-ERC8004-Version", "")
-        assert hdr in ("S40", "S41", "S42", "S43", "S44", "S45", "S46", "S47", "S48")
+        sprint_num = int(hdr[1:]) if hdr and hdr[1:].isdigit() else 0
+        assert sprint_num >= 40
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -210,7 +214,9 @@ class TestRootEndpoint:
     def test_root_has_version(self, server):
         data = _get(f"{server}/")
         assert "version" in data
-        assert data["version"] in ("S40", "S41", "S42", "S43", "S44", "S45", "S46", "S47", "S48")
+        version = data["version"]
+        sprint_num = int(version[1:]) if version and version[1:].isdigit() else 0
+        assert sprint_num >= 40
 
     def test_root_has_description(self, server):
         data = _get(f"{server}/")

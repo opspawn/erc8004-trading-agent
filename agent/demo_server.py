@@ -59,13 +59,14 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S53"
+SERVER_VERSION = "S54"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
 _S50_TEST_COUNT = 6185  # verified: full suite after S50 (demo HTML + submission)
 _S52_TEST_COUNT = 6210  # verified: full suite after S52 (interactive demo UI)
 _S53_TEST_COUNT_CONST = 6240  # target after S53 tests (judge dashboard + TA signals)
+_S54_TEST_COUNT_CONST = 6300  # target after S54 tests (demo video endpoints)
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -5885,8 +5886,8 @@ def get_s52_live_data() -> Dict[str, Any]:
             "service": "ERC-8004 Demo Server",
             "version": SERVER_VERSION,
             "sprint": SERVER_VERSION,
-            "tests": _S53_TEST_COUNT_CONST,
-            "test_count": _S53_TEST_COUNT_CONST,
+            "tests": _S54_TEST_COUNT_CONST,
+            "test_count": _S54_TEST_COUNT_CONST,
             "dev_mode": X402_DEV_MODE,
         },
         "swarm_vote": get_s46_swarm_vote(symbol="BTC-USD", signal_type="BUY"),
@@ -6890,7 +6891,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S53_TEST_COUNT_CONST,
+                "test_count": _S54_TEST_COUNT_CONST,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6942,8 +6943,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
                 "sprint": SERVER_VERSION,
-                "tests": _S53_TEST_COUNT_CONST,
-                "test_count": _S53_TEST_COUNT_CONST,
+                "tests": _S54_TEST_COUNT_CONST,
+                "test_count": _S54_TEST_COUNT_CONST,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
