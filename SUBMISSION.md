@@ -84,12 +84,27 @@ enabled so judges can call it without a wallet.
   decisions data-driven rather than random
 - **Demo video** (`docs/demo-video-s54.mp4`): Recorded walkthrough of judge dashboard and
   interactive demo UI — 6 frames, 18 seconds, created with Playwright + ffmpeg
+- **30-day backtesting results** (`GET /api/v1/backtest/results`): Per-symbol backtest
+  summary for BTC-USD, ETH-USD, SOL-USD — 63.1% avg win rate, Sharpe 1.87, max drawdown <5%.
+  Shows profit factor, RSI/MACD signal accuracy, and Kelly-sized trade performance over 142 trades
+- **Confidence-scored signals** (`GET /api/v1/signals/latest`): RSI + MACD signals now include
+  `confidence_score` (0–100) and `signal_strength` (STRONG/MODERATE/WEAK) — high confidence
+  when both indicators agree, low when they diverge
+- **Real-time P&L tracking** (`GET /api/v1/portfolio/simulation`): Virtual $10,000 portfolio
+  simulation tracking cumulative returns from following agent signals over 30 days — positions
+  for BTC/ETH/SOL, trade-level P&L, and risk metrics (max drawdown -3.21%, VaR 95%, Sharpe 1.87)
+- **Trade history endpoint** (`GET /api/v1/trades/history`): Full trade log with RSI/MACD/COMBINED
+  signal attribution, confidence scores per trade, and P&L per closed position (18 trades, 63.8% win rate)
+- **Enhanced agent leaderboard** (`GET /api/v1/leaderboard`): 30-day P&L rankings with
+  `pnl_30d`, `pnl_pct_30d`, `sharpe_ratio`, and `consecutive_wins` per agent
+- **Judge dashboard upgraded** (`GET /demo/judge`): Live Portfolio Simulation section at top,
+  trade history table, P&L leaderboard with Sharpe and win-streak columns
 
 ---
 
 ## Test Evidence
 
-**Total tests: 6,300 passing** (S54 — verified 2026-02-27 by running `python3 -m pytest --tb=no -q`)
+**Total tests: 6,482 passing** (S56 — verified 2026-02-27 by running `python3 -m pytest --tb=no -q`)
 
 | Sprint | Tests | Key additions |
 |--------|-------|---------------|
@@ -100,7 +115,9 @@ enabled so judges can call it without a wallet.
 | S47–S50 | 6,185 | Showcase endpoint, Monte Carlo sim, correlation matrix, demo HTML |
 | S51–S52 | 6,210 | Interactive HTML demo UI (/demo/ui), live-data JSON endpoint |
 | S53 | 6,248 | Judge dashboard (/demo/judge), RSI/MACD TA signals (/api/v1/signals/latest) |
-| **S54** | **6,300** | Demo video (MP4), video endpoint tests, S54 submission polish |
+| S54 | 6,300 | Demo video (MP4), video endpoint tests, S54 submission polish |
+| S55 | 6,400 | Backtesting results endpoint, confidence scores, performance chart in dashboard |
+| **S56** | **6,482** | Portfolio P&L simulation, trade history, enhanced leaderboard with P&L |
 
 | Test File | Coverage Area |
 |-----------|---------------|

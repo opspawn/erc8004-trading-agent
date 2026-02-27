@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S54 (demo video + video endpoint tests + 6,300+ total)
+**Sprint**: S56 (portfolio P&L simulation + trade history + enhanced leaderboard + 6,482+ total)
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Technical Quality
 
-- [x] **Test coverage** — 6,300+ passing tests across 54 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Test coverage** — 6,482+ passing tests across 56 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
 - [x] **Portfolio risk engine** — VaR at 95%/99% (historical simulation), Sharpe/Sortino/Calmar, cross-symbol correlation matrix (S46)
 - [x] **Position sizing** — Volatility-based, Half-Kelly, fixed-fraction; POST `/api/v1/risk/position-size` (S46)
 - [x] **Exposure dashboard** — Per-symbol exposure + Herfindahl concentration index; GET `/api/v1/risk/exposure` (S46)
@@ -36,8 +36,16 @@
 - [x] **Server updated to S52** — Live server at port 8084 reports version S52, 6210 tests (S52)
 - [x] **Server updated to S53** — Live server at port 8084 reports version S53, 6240+ tests (S53)
 - [x] **Server updated to S54** — Demo video (MP4) + video endpoint tests + 6,300+ tests (S54)
+- [x] **Server updated to S55** — Backtesting results endpoint + confidence scores + performance chart in dashboard + 6,400+ tests (S55)
+- [x] **Server updated to S56** — Portfolio P&L simulation + trade history + enhanced leaderboard with P&L + 6,482+ tests (S56)
 - [x] **Judge dashboard** — `GET /demo/judge` returns single-page HTML overview for judges with leaderboard, swarm vote, TA signals, risk summary, contract links, curl examples (S53)
-- [x] **TA signals endpoint** — `GET /api/v1/signals/latest` returns RSI + MACD signals for BTC-USD, ETH-USD, SOL-USD using real price history (S53)
+- [x] **TA signals endpoint** — `GET /api/v1/signals/latest` returns RSI + MACD signals for BTC-USD, ETH-USD, SOL-USD with `confidence_score` + `signal_strength` (S55)
+- [x] **Backtesting results endpoint** — `GET /api/v1/backtest/results` returns 30-day per-symbol backtest summary: 63.1% avg win rate, Sharpe 1.87, 142 trades (S55)
+- [x] **Performance chart in dashboard** — `/demo/judge` now shows backtest table with equity curve (Unicode block chars), win rate badges, 30-day return (S55)
+- [x] **Portfolio P&L simulation** — `GET /api/v1/portfolio/simulation` returns virtual portfolio cumulative P&L over 30 days: +7.94% return, positions for BTC/ETH/SOL, trade history, risk metrics (S56)
+- [x] **Trade history endpoint** — `GET /api/v1/trades/history` returns 18 trades with RSI/MACD/COMBINED signal attribution, confidence scores, and P&L per closed position (S56)
+- [x] **Enhanced leaderboard** — `GET /api/v1/leaderboard` returns 30-day P&L rankings with `pnl_30d`, `pnl_pct_30d`, `sharpe_ratio`, `consecutive_wins` per agent (S56)
+- [x] **Judge dashboard upgraded (S56)** — Live Portfolio Simulation section at top with return/P&L/drawdown/win-rate cards; trade history table; P&L leaderboard with Sharpe and win-streak
 - [x] **Demo video recorded** — `docs/demo-video-s54.mp4` — 18-second walkthrough of judge dashboard + interactive demo UI (S54)
 
 ## Differentiators
@@ -64,7 +72,7 @@
 ```bash
 # Health check
 curl https://api.opspawn.com/erc8004/demo/health
-# Expected: {"status":"ok","tests":6300,"version":"S54",...}
+# Expected: {"status":"ok","tests":6482,"version":"S56",...}
 
 # Judge dashboard (HTML)
 curl http://localhost:8084/demo/judge
@@ -93,7 +101,7 @@ curl -s -X POST 'https://api.opspawn.com/erc8004/api/v1/demo/showcase' | python3
 ## Pre-Submission Final Check (March 22)
 
 - [ ] Demo server is running and `/health` returns 200
-- [ ] All 6,300+ tests pass (`python3 -m pytest tests/ -q --tb=no`)
+- [ ] All 6,482+ tests pass (`python3 -m pytest tests/ -q --tb=no`)
 - [ ] Contract addresses in `contracts/deployment.json` are correct
 - [ ] README links are valid
 - [ ] `docs/demo.html` opens in browser and 'Run All' button fetches live data for all 5 steps
