@@ -120,11 +120,15 @@ The demo server runs on **port 8084** (also proxied at `https://api.opspawn.com/
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET`  | `/health` | `{status:"ok", tests:4968, version:"S40"}` |
-| `GET`  | `/` | API index with all endpoints |
+| `GET`  | `/demo/health` | `{status:"ok", tests:6085, sprint:"S46", highlights:[...]}` |
+| `GET`  | `/demo/info` | API index with all endpoints |
 | `POST` | `/demo/run` | Run full 10-tick multi-agent demo |
-| `GET`  | `/demo/portfolio/snapshot` | Live portfolio snapshot |
-| `GET`  | `/demo/strategy/compare` | Strategy comparison dashboard |
+| `GET`  | `/api/v1/risk/portfolio` | Portfolio VaR 95/99%, Sharpe, Sortino, Calmar, correlation matrix (S46) |
+| `POST` | `/api/v1/risk/position-size` | Position sizing by risk budget + volatility: Kelly/volatility/fixed (S46) |
+| `GET`  | `/api/v1/risk/exposure` | Per-symbol exposure + concentration risk HHI (S46) |
+| `POST` | `/api/v1/swarm/vote` | 10-agent stake-weighted vote on trade signal (S46) |
+| `GET`  | `/api/v1/swarm/performance` | 24h PnL + Sharpe leaderboard for all 10 swarm agents (S46) |
+| `POST` | `/api/v1/demo/showcase` | **Judge showcase**: price tick + swarm vote + VaR + paper trade in one call (S47) |
 | `GET`  | `/demo/leaderboard` | Agent leaderboard (`?sort_by=sharpe\|sortino\|pnl`) |
 | `POST` | `/demo/backtest` | GBM historical backtest |
 | `POST` | `/demo/consensus` | Multi-agent consensus vote |
@@ -138,10 +142,10 @@ The demo server runs on **port 8084** (also proxied at `https://api.opspawn.com/
 cd agent
 pip install -r requirements.txt
 python3 -m pytest tests/ -q --tb=short
-# Expected: 4,968 passed
+# Expected: 6,088+ passed
 ```
 
-**4,968 tests across 40 sprints** covering:
+**6,085+ tests across 47 sprints** covering:
 - ERC-8004 identity registration and validation
 - Reputation-weighted consensus algorithm
 - x402 payment gate (dev and production mode)
