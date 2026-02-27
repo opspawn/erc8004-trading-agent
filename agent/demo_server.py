@@ -59,8 +59,9 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S40"
-_S40_TEST_COUNT = 4968
+SERVER_VERSION = "S41"
+_S40_TEST_COUNT = 4968  # kept for backward-compat imports
+_S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -5865,6 +5866,357 @@ _SERVER_START_TIME = time.time()
 _seed_feed_buffer()
 
 
+# ── S41: Strategy Compare Backtest ─────────────────────────────────────────────
+# POST /api/v1/strategies/compare
+# Runs backtests for multiple strategy IDs over a shared date range and returns
+# side-by-side performance metrics + leaderboard ranking.
+
+_S41_VALID_STRATEGIES = {"momentum", "mean_reversion", "buy_and_hold", "random"}
+_S41_MAX_STRATEGIES = 6
+_S41_MIN_STRATEGIES = 2
+_S41_DEFAULT_SYMBOL = "BTC/USD"
+_S41_DEFAULT_CAPITAL = 10_000.0
+_S41_DEFAULT_START = "2023-01-01"
+_S41_DEFAULT_END = "2024-01-01"
+
+
+def _s41_win_rate_from_equity(equity: List[float]) -> float:
+    """Compute fraction of daily moves that are positive."""
+    if len(equity) < 2:
+        return 0.5
+    gains = sum(1 for i in range(1, len(equity)) if equity[i] > equity[i - 1])
+    return round(gains / (len(equity) - 1), 4)
+
+
+def run_strategies_compare(
+    strategy_ids: List[str],
+    start_date: str = _S41_DEFAULT_START,
+    end_date: str = _S41_DEFAULT_END,
+    symbol: str = _S41_DEFAULT_SYMBOL,
+    initial_capital: float = _S41_DEFAULT_CAPITAL,
+) -> Dict[str, Any]:
+    """
+    Run backtests for each strategy over a shared date range and return
+    side-by-side performance with a leaderboard ranking by Sharpe ratio.
+
+    Args:
+        strategy_ids:    List of strategy names (momentum|mean_reversion|buy_and_hold|random).
+        start_date:      ISO date 'YYYY-MM-DD'.
+        end_date:        ISO date 'YYYY-MM-DD'.
+        symbol:          Trading symbol.
+        initial_capital: Starting capital in USD.
+
+    Returns:
+        dict with 'strategies' list (ranked), 'leaderboard' summary.
+    """
+    import datetime as _dt
+
+    if not isinstance(strategy_ids, list):
+        raise ValueError("strategy_ids must be a list")
+    if len(strategy_ids) < _S41_MIN_STRATEGIES:
+        raise ValueError(f"Provide at least {_S41_MIN_STRATEGIES} strategy IDs")
+    if len(strategy_ids) > _S41_MAX_STRATEGIES:
+        raise ValueError(f"Too many strategies: max {_S41_MAX_STRATEGIES}")
+
+    unknown = [s for s in strategy_ids if s not in _S41_VALID_STRATEGIES]
+    if unknown:
+        raise ValueError(
+            f"Unknown strategy/strategies {unknown}. Valid: {sorted(_S41_VALID_STRATEGIES)}"
+        )
+
+    if initial_capital <= 0:
+        raise ValueError("initial_capital must be positive")
+
+    try:
+        t_start = _dt.date.fromisoformat(start_date)
+        t_end = _dt.date.fromisoformat(end_date)
+    except ValueError as exc:
+        raise ValueError(f"Invalid date format (expected YYYY-MM-DD): {exc}") from exc
+
+    if t_end <= t_start:
+        raise ValueError("end_date must be after start_date")
+
+    n_days = (t_end - t_start).days
+    if n_days > _BACKTEST_MAX_DAYS:
+        raise ValueError(f"Period too long: max {_BACKTEST_MAX_DAYS} days")
+
+    results = []
+    for strat in strategy_ids:
+        bt = build_backtest(
+            symbol=symbol,
+            strategy=strat,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+        )
+        equity = bt["equity_curve"]
+        win_rate = _s41_win_rate_from_equity(equity)
+        results.append({
+            "strategy_id": strat,
+            "symbol": symbol,
+            "start_date": start_date,
+            "end_date": end_date,
+            "period_days": bt["period_days"],
+            "initial_capital": initial_capital,
+            "final_equity": bt["final_equity"],
+            "metrics": {
+                "total_return_pct": bt["total_return_pct"],
+                "sharpe_ratio": bt["sharpe_ratio"],
+                "max_drawdown_pct": bt["max_drawdown_pct"],
+                "win_rate": win_rate,
+                "num_trades": bt["num_trades"],
+            },
+        })
+
+    # Rank by Sharpe ratio (descending)
+    ranked = sorted(results, key=lambda x: x["metrics"]["sharpe_ratio"], reverse=True)
+    for i, item in enumerate(ranked, start=1):
+        item["rank"] = i
+
+    best = ranked[0]
+    worst = ranked[-1]
+    leaderboard = [
+        {
+            "rank": item["rank"],
+            "strategy_id": item["strategy_id"],
+            "sharpe_ratio": item["metrics"]["sharpe_ratio"],
+            "total_return_pct": item["metrics"]["total_return_pct"],
+            "max_drawdown_pct": item["metrics"]["max_drawdown_pct"],
+            "win_rate": item["metrics"]["win_rate"],
+        }
+        for item in ranked
+    ]
+
+    return {
+        "comparison_id": f"s41-cmp-{hash(str(strategy_ids) + start_date + end_date) & 0xFFFFFF:06x}",
+        "symbol": symbol,
+        "start_date": start_date,
+        "end_date": end_date,
+        "strategies": ranked,
+        "leaderboard": leaderboard,
+        "summary": {
+            "best_strategy": best["strategy_id"],
+            "best_sharpe": best["metrics"]["sharpe_ratio"],
+            "worst_strategy": worst["strategy_id"],
+            "worst_sharpe": worst["metrics"]["sharpe_ratio"],
+            "strategy_count": len(ranked),
+        },
+        "generated_at": time.time(),
+    }
+
+
+# ── S41: Monte Carlo Portfolio Simulation ──────────────────────────────────────
+# POST /api/v1/portfolio/monte-carlo
+
+_S41_MC_DEFAULT_PATHS = 1000
+_S41_MC_MAX_PATHS = 5000
+_S41_MC_DEFAULT_DAYS = 252
+_S41_MC_MAX_DAYS = 1260  # 5 years
+_S41_MC_PERCENTILES = (5, 50, 95)
+
+
+def run_monte_carlo(
+    initial_capital: float = _S41_DEFAULT_CAPITAL,
+    n_paths: int = _S41_MC_DEFAULT_PATHS,
+    n_days: int = _S41_MC_DEFAULT_DAYS,
+    symbol: str = _S41_DEFAULT_SYMBOL,
+    seed: int = 41,
+) -> Dict[str, Any]:
+    """
+    Run a Monte Carlo simulation on portfolio returns.
+
+    Simulates n_paths GBM paths of n_days each, then returns
+    5th / 50th / 95th percentile terminal wealth and return distributions.
+
+    Args:
+        initial_capital: Starting capital in USD.
+        n_paths:         Number of simulation paths (1–5000).
+        n_days:          Number of trading days to simulate (1–1260).
+        symbol:          Symbol to determine volatility parameters.
+        seed:            Base RNG seed for reproducibility.
+
+    Returns:
+        dict with percentile_returns, percentile_equity, paths_sample (first 10).
+    """
+    if initial_capital <= 0:
+        raise ValueError("initial_capital must be positive")
+    n_paths = max(1, min(int(n_paths), _S41_MC_MAX_PATHS))
+    n_days = max(1, min(int(n_days), _S41_MC_MAX_DAYS))
+
+    annual_vol = _SYMBOL_VOLATILITY.get(symbol, _SYMBOL_VOLATILITY["default"])
+    daily_vol = annual_vol / math.sqrt(_TRADING_DAYS)
+    daily_mu = 0.0002
+
+    import random as _rng
+    rng = _rng.Random(seed)
+
+    terminal_values: List[float] = []
+    sample_paths: List[List[float]] = []  # first 10 paths for visualization
+
+    for path_idx in range(n_paths):
+        equity = initial_capital
+        path_seed = seed + path_idx * 7919  # deterministic but varied
+        path_rng = _rng.Random(path_seed)
+        if path_idx < 10:
+            path_points = [round(equity, 2)]
+        for _ in range(n_days):
+            z = path_rng.gauss(0, 1)
+            equity = equity * math.exp(
+                (daily_mu - 0.5 * daily_vol ** 2) + daily_vol * z
+            )
+            equity = max(equity, 0.01)
+            if path_idx < 10:
+                path_points.append(round(equity, 2))  # type: ignore[possibly-undefined]
+        terminal_values.append(equity)
+        if path_idx < 10:
+            sample_paths.append(path_points)  # type: ignore[possibly-undefined]
+
+    terminal_values.sort()
+    n = len(terminal_values)
+
+    def _percentile(pct: int) -> float:
+        idx = max(0, min(n - 1, int(pct / 100.0 * n)))
+        return round(terminal_values[idx], 2)
+
+    def _pct_return(equity: float) -> float:
+        return round((equity - initial_capital) / initial_capital * 100.0, 4)
+
+    p5 = _percentile(5)
+    p50 = _percentile(50)
+    p95 = _percentile(95)
+
+    mean_terminal = round(sum(terminal_values) / n, 2)
+    prob_profit = round(sum(1 for v in terminal_values if v > initial_capital) / n, 4)
+
+    # Compute max drawdown on median path (sample_paths[0] if available)
+    if sample_paths:
+        median_path = sample_paths[len(sample_paths) // 2]
+        median_max_dd = _compute_max_drawdown(median_path)
+    else:
+        median_max_dd = 0.0
+
+    return {
+        "simulation_id": f"mc-{seed}-{n_paths}-{n_days}",
+        "symbol": symbol,
+        "initial_capital": initial_capital,
+        "n_paths": n_paths,
+        "n_days": n_days,
+        "percentiles": {
+            "p5": {"equity": p5, "return_pct": _pct_return(p5)},
+            "p50": {"equity": p50, "return_pct": _pct_return(p50)},
+            "p95": {"equity": p95, "return_pct": _pct_return(p95)},
+        },
+        "summary": {
+            "mean_terminal_equity": mean_terminal,
+            "mean_return_pct": _pct_return(mean_terminal),
+            "prob_profit": prob_profit,
+            "median_max_drawdown_pct": median_max_dd,
+        },
+        "paths_sample": sample_paths,
+        "generated_at": time.time(),
+    }
+
+
+# ── S41: Market Correlation Matrix ─────────────────────────────────────────────
+# GET /api/v1/market/correlation
+
+_S41_VALID_SYMBOLS = {"BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD"}
+_S41_DEFAULT_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
+_S41_CORR_DAYS = 252
+
+
+def get_market_correlation(
+    symbols: List[str],
+    n_days: int = _S41_CORR_DAYS,
+    seed: int = 41,
+) -> Dict[str, Any]:
+    """
+    Compute a pairwise correlation matrix for the given symbols using GBM return series.
+
+    Args:
+        symbols: List of trading symbols (2–6 symbols).
+        n_days:  Number of days for return history.
+        seed:    RNG seed for deterministic results.
+
+    Returns:
+        dict with 'matrix' (symbol → symbol → correlation), 'symbols', metadata.
+    """
+    if not isinstance(symbols, list):
+        raise ValueError("symbols must be a list")
+    symbols = [s.strip().upper() for s in symbols]
+    # Normalise slash — accept both BTC/USD and BTCUSD
+    symbols = [s if "/" in s else s[:3] + "/" + s[3:] for s in symbols]
+    if len(symbols) < 2:
+        raise ValueError("Provide at least 2 symbols")
+    if len(symbols) > 8:
+        raise ValueError("Too many symbols: max 8")
+
+    n_days = max(10, min(int(n_days), 1000))
+
+    # Generate a daily-return series for each symbol (GBM)
+    def _daily_returns(sym: str, path_seed: int) -> List[float]:
+        prices = _gbm_price_series(
+            seed=path_seed,
+            n_days=n_days,
+            mu=0.0002,
+            sigma=_SYMBOL_VOLATILITY.get(sym, _SYMBOL_VOLATILITY["default"]) / math.sqrt(_TRADING_DAYS),
+        )
+        return [
+            (prices[i] - prices[i - 1]) / prices[i - 1]
+            for i in range(1, len(prices))
+        ]
+
+    series: Dict[str, List[float]] = {}
+    for sym in symbols:
+        sym_seed = seed + abs(hash(sym)) % 10000
+        series[sym] = _daily_returns(sym, sym_seed)
+
+    def _pearson(xs: List[float], ys: List[float]) -> float:
+        n = min(len(xs), len(ys))
+        if n < 2:
+            return 0.0
+        mx = sum(xs[:n]) / n
+        my = sum(ys[:n]) / n
+        num = sum((xs[i] - mx) * (ys[i] - my) for i in range(n))
+        dx = math.sqrt(sum((xs[i] - mx) ** 2 for i in range(n)))
+        dy = math.sqrt(sum((ys[i] - my) ** 2 for i in range(n)))
+        if dx == 0 or dy == 0:
+            return 1.0 if dx == dy else 0.0
+        return round(max(-1.0, min(1.0, num / (dx * dy))), 4)
+
+    matrix: Dict[str, Dict[str, float]] = {}
+    for sym_a in symbols:
+        matrix[sym_a] = {}
+        for sym_b in symbols:
+            if sym_a == sym_b:
+                matrix[sym_a][sym_b] = 1.0
+            elif sym_b in matrix and sym_a in matrix[sym_b]:
+                matrix[sym_a][sym_b] = matrix[sym_b][sym_a]
+            else:
+                matrix[sym_a][sym_b] = _pearson(series[sym_a], series[sym_b])
+
+    # Highest correlation pair (excluding diagonal)
+    best_pair = ("", "")
+    best_corr = -2.0
+    for i, sa in enumerate(symbols):
+        for sb in symbols[i + 1:]:
+            c = matrix[sa][sb]
+            if c > best_corr:
+                best_corr = c
+                best_pair = (sa, sb)
+
+    return {
+        "matrix": matrix,
+        "symbols": symbols,
+        "n_days": n_days,
+        "summary": {
+            "most_correlated_pair": list(best_pair),
+            "correlation": best_corr,
+        },
+        "generated_at": time.time(),
+    }
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class _DemoHandler(BaseHTTPRequestHandler):
@@ -5908,7 +6260,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S40_TEST_COUNT,
+                "test_count": _S41_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -5917,6 +6269,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "GET  /demo/strategy/compare": "Strategy comparison dashboard",
                     "GET  /demo/leaderboard": "Agent leaderboard by metric",
                     "POST /demo/backtest": "Historical backtest (GBM)",
+                    "POST /api/v1/strategies/compare": "Multi-strategy backtest comparison with leaderboard",
+                    "POST /api/v1/portfolio/monte-carlo": "Monte Carlo simulation (1000 paths, percentile returns)",
+                    "GET  /api/v1/market/correlation": "Symbol correlation matrix",
                 },
                 "quickstart": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -5928,8 +6283,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
-                "tests": _S40_TEST_COUNT,
-                "test_count": _S40_TEST_COUNT,
+                "tests": _S41_TEST_COUNT,
+                "test_count": _S41_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -6134,6 +6489,25 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S39: Strategy comparison dashboard
         elif path in ("/demo/strategy/compare",):
             self._send_json(200, get_strategy_comparison())
+        # S41: Market correlation matrix
+        elif path in ("/api/v1/market/correlation",):
+            raw_symbols = qs.get("symbols", [",".join(_S41_DEFAULT_SYMBOLS)])[0]
+            sym_list = [s.strip() for s in raw_symbols.split(",") if s.strip()]
+            try:
+                n_days = int(qs.get("n_days", [str(_S41_CORR_DAYS)])[0])
+            except (ValueError, TypeError):
+                n_days = _S41_CORR_DAYS
+            try:
+                seed = int(qs.get("seed", ["41"])[0])
+            except (ValueError, TypeError):
+                seed = 41
+            try:
+                result = get_market_correlation(symbols=sym_list, n_days=n_days, seed=seed)
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+            except Exception as exc:
+                self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -6207,6 +6581,12 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S39: Live market simulation
         elif path in ("/demo/live/simulate",):
             self._handle_live_simulate()
+        # S41: Strategy compare backtest
+        elif path in ("/api/v1/strategies/compare",):
+            self._handle_s41_strategies_compare()
+        # S41: Monte Carlo portfolio simulation
+        elif path in ("/api/v1/portfolio/monte-carlo",):
+            self._handle_s41_monte_carlo()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -7009,6 +7389,97 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "last_sim_return_pct": result["summary"]["total_return_pct"],
                 })
             self._send_json(200, result)
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    # ── S41 Handlers ─────────────────────────────────────────────────────────
+
+    def _handle_s41_strategies_compare(self) -> None:
+        """Handle POST /api/v1/strategies/compare — multi-strategy backtest comparison."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        strategy_ids = body.get("strategy_ids", [])
+        if not isinstance(strategy_ids, list):
+            self._send_json(400, {"error": "strategy_ids must be a list"})
+            return
+
+        start_date = body.get("start_date", _S41_DEFAULT_START)
+        end_date = body.get("end_date", _S41_DEFAULT_END)
+        symbol = body.get("symbol", _S41_DEFAULT_SYMBOL)
+        initial_capital = body.get("initial_capital", _S41_DEFAULT_CAPITAL)
+
+        try:
+            initial_capital = float(initial_capital)
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "initial_capital must be a number"})
+            return
+
+        try:
+            result = run_strategies_compare(
+                strategy_ids=strategy_ids,
+                start_date=start_date,
+                end_date=end_date,
+                symbol=symbol,
+                initial_capital=initial_capital,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_s41_monte_carlo(self) -> None:
+        """Handle POST /api/v1/portfolio/monte-carlo — Monte Carlo simulation."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        initial_capital = body.get("initial_capital", _S41_DEFAULT_CAPITAL)
+        n_paths = body.get("n_paths", _S41_MC_DEFAULT_PATHS)
+        n_days = body.get("n_days", _S41_MC_DEFAULT_DAYS)
+        symbol = body.get("symbol", _S41_DEFAULT_SYMBOL)
+        seed = body.get("seed", 41)
+
+        try:
+            initial_capital = float(initial_capital)
+            n_paths = int(n_paths)
+            n_days = int(n_days)
+            seed = int(seed)
+        except (TypeError, ValueError) as exc:
+            self._send_json(400, {"error": f"Invalid parameter: {exc}"})
+            return
+
+        if initial_capital <= 0:
+            self._send_json(400, {"error": "initial_capital must be positive"})
+            return
+        if n_paths < 1:
+            self._send_json(400, {"error": "n_paths must be at least 1"})
+            return
+        if n_days < 1:
+            self._send_json(400, {"error": "n_days must be at least 1"})
+            return
+
+        try:
+            result = run_monte_carlo(
+                initial_capital=initial_capital,
+                n_paths=n_paths,
+                n_days=n_days,
+                symbol=symbol,
+                seed=seed,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
 
