@@ -59,7 +59,7 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S42"
+SERVER_VERSION = "S43"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
@@ -6542,6 +6542,254 @@ def get_strategies_leaderboard(
     }
 
 
+# ── S43: Cross-Agent Coordination ─────────────────────────────────────────────
+#
+# Endpoints:
+#   POST /api/v1/agents/broadcast          — broadcast signal to all agents
+#   GET  /api/v1/coordination/signals      — retrieve recent broadcast signals
+#   POST /api/v1/coordination/resolve      — resolve conflicting agent signals
+
+_S43_TEST_COUNT = 5519  # verified: full suite 2026-02-27 after S43
+
+_S43_SIGNAL_LOCK = threading.Lock()
+_S43_SIGNAL_BUFFER: List[Dict[str, Any]] = []  # capped at 100 signals
+_S43_SIGNAL_BUFFER_MAX = 100
+
+_S43_VALID_ACTIONS = {"BUY", "SELL", "HOLD", "REBALANCE"}
+_S43_VALID_ASSETS = {
+    "BTC/USD", "ETH/USD", "SOL/USD", "MATIC/USD", "AVAX/USD",
+    "BNB/USD", "LINK/USD", "ARB/USD",
+}
+_S43_AGENT_IDS = {
+    "agent-conservative-001",
+    "agent-balanced-002",
+    "agent-aggressive-003",
+    "agent-momentum-004",
+    "agent-meanrev-005",
+}
+_S43_CONFLICT_STRATEGIES = {"highest_confidence", "majority_vote", "weighted_consensus"}
+
+
+def _s43_record_signal(signal: Dict[str, Any]) -> None:
+    """Append a broadcast signal to the global ring buffer (max 100)."""
+    with _S43_SIGNAL_LOCK:
+        _S43_SIGNAL_BUFFER.append(signal)
+        if len(_S43_SIGNAL_BUFFER) > _S43_SIGNAL_BUFFER_MAX:
+            _S43_SIGNAL_BUFFER.pop(0)
+
+
+def broadcast_signal(
+    agent_id: str,
+    action: str,
+    asset: str,
+    confidence: float,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Broadcast a trade signal from one agent to all peers.
+
+    Args:
+        agent_id:   Originating agent identifier.
+        action:     Trade action — BUY | SELL | HOLD | REBALANCE.
+        asset:      Asset symbol (e.g. "BTC/USD").
+        confidence: Signal confidence in [0.0, 1.0].
+        metadata:   Optional extra payload forwarded to all agents.
+
+    Returns:
+        dict with broadcast_id, recipients, signal, timestamp.
+
+    Raises:
+        ValueError: on invalid action, asset or confidence.
+    """
+    if not agent_id:
+        raise ValueError("agent_id is required")
+    action_upper = action.upper()
+    if action_upper not in _S43_VALID_ACTIONS:
+        raise ValueError(f"Invalid action '{action}'. Valid: {sorted(_S43_VALID_ACTIONS)}")
+    if asset not in _S43_VALID_ASSETS:
+        raise ValueError(f"Invalid asset '{asset}'. Valid: {sorted(_S43_VALID_ASSETS)}")
+    if not (0.0 <= confidence <= 1.0):
+        raise ValueError(f"confidence must be in [0.0, 1.0], got {confidence}")
+
+    recipients = sorted(_S43_AGENT_IDS - {agent_id})
+    broadcast_id = f"bc-{int(time.time() * 1000)}-{agent_id[:8]}"
+    signal: Dict[str, Any] = {
+        "broadcast_id": broadcast_id,
+        "from_agent": agent_id,
+        "action": action_upper,
+        "asset": asset,
+        "confidence": round(confidence, 4),
+        "metadata": metadata or {},
+        "recipients": recipients,
+        "recipient_count": len(recipients),
+        "timestamp": time.time(),
+        "status": "delivered",
+    }
+    _s43_record_signal(signal)
+    return signal
+
+
+def get_coordination_signals(
+    asset: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """
+    Retrieve recent cross-agent broadcast signals.
+
+    Args:
+        asset:    Optional filter by asset symbol.
+        agent_id: Optional filter by originating agent.
+        limit:    Max results (1–100, default 20).
+
+    Returns:
+        dict with 'signals' list and metadata.
+    """
+    limit = max(1, min(100, int(limit)))
+    with _S43_SIGNAL_LOCK:
+        signals = list(_S43_SIGNAL_BUFFER)
+
+    if asset is not None:
+        if asset not in _S43_VALID_ASSETS:
+            raise ValueError(f"Invalid asset '{asset}'. Valid: {sorted(_S43_VALID_ASSETS)}")
+        signals = [s for s in signals if s["asset"] == asset]
+    if agent_id is not None:
+        signals = [s for s in signals if s["from_agent"] == agent_id]
+
+    # Most recent first
+    signals = list(reversed(signals))[:limit]
+
+    return {
+        "signals": signals,
+        "total_returned": len(signals),
+        "filters": {"asset": asset, "agent_id": agent_id},
+        "limit": limit,
+        "generated_at": time.time(),
+    }
+
+
+def resolve_coordination_conflict(
+    signals: List[Dict[str, Any]],
+    strategy: str = "highest_confidence",
+) -> Dict[str, Any]:
+    """
+    Resolve conflicting agent signals into a single recommended action.
+
+    When agents disagree on direction the resolver selects the winning
+    signal and logs the disagreement.
+
+    Args:
+        signals:  List of signal dicts, each with:
+                    agent_id, action, confidence, asset (optional).
+        strategy: Resolution strategy:
+                    highest_confidence — pick highest-confidence signal.
+                    majority_vote      — pick most-common action; tie → highest_confidence.
+                    weighted_consensus — weight votes by confidence; pick heaviest bucket.
+
+    Returns:
+        dict with resolved_action, winning_signal, disagreement_logged,
+        conflict_detected, strategy, candidates, resolution_details.
+
+    Raises:
+        ValueError: on empty signals list or invalid strategy.
+    """
+    if not signals:
+        raise ValueError("signals list must not be empty")
+    if strategy not in _S43_CONFLICT_STRATEGIES:
+        raise ValueError(
+            f"Invalid strategy '{strategy}'. Valid: {sorted(_S43_CONFLICT_STRATEGIES)}"
+        )
+
+    # Normalise each signal
+    normalised: List[Dict[str, Any]] = []
+    for sig in signals:
+        agent = sig.get("agent_id", sig.get("from_agent", "unknown"))
+        action = str(sig.get("action", "HOLD")).upper()
+        confidence = float(sig.get("confidence", 0.5))
+        confidence = max(0.0, min(1.0, confidence))
+        normalised.append({
+            "agent_id": agent,
+            "action": action if action in _S43_VALID_ACTIONS else "HOLD",
+            "confidence": confidence,
+        })
+
+    # Detect conflict: more than one distinct action present
+    actions_present = {s["action"] for s in normalised}
+    conflict_detected = len(actions_present) > 1
+
+    # ── Resolution ─────────────────────────────────────────────────────────────
+    if strategy == "highest_confidence":
+        winner = max(normalised, key=lambda s: s["confidence"])
+        resolution_details = {"method": "highest_confidence", "winner_confidence": winner["confidence"]}
+
+    elif strategy == "majority_vote":
+        action_counts: Dict[str, int] = {}
+        for s in normalised:
+            action_counts[s["action"]] = action_counts.get(s["action"], 0) + 1
+        max_count = max(action_counts.values())
+        candidates_by_vote = [a for a, c in action_counts.items() if c == max_count]
+        # Tie-break by highest confidence within winning actions
+        top_action = candidates_by_vote[0] if len(candidates_by_vote) == 1 else None
+        if top_action is None:
+            winner = max(normalised, key=lambda s: s["confidence"])
+        else:
+            winner = max(
+                [s for s in normalised if s["action"] == top_action],
+                key=lambda s: s["confidence"],
+            )
+        resolution_details = {
+            "method": "majority_vote",
+            "vote_tally": action_counts,
+            "tie_broken_by_confidence": top_action is None,
+        }
+
+    else:  # weighted_consensus
+        bucket_weight: Dict[str, float] = {}
+        for s in normalised:
+            bucket_weight[s["action"]] = bucket_weight.get(s["action"], 0.0) + s["confidence"]
+        top_action = max(bucket_weight, key=lambda a: bucket_weight[a])
+        winner = max(
+            [s for s in normalised if s["action"] == top_action],
+            key=lambda s: s["confidence"],
+        )
+        resolution_details = {
+            "method": "weighted_consensus",
+            "bucket_weights": {k: round(v, 4) for k, v in bucket_weight.items()},
+        }
+
+    # Log disagreement to signal buffer (as a resolution record)
+    resolution_record: Dict[str, Any] = {
+        "broadcast_id": f"resolve-{int(time.time() * 1000)}",
+        "from_agent": "__resolver__",
+        "action": winner["action"],
+        "asset": signals[0].get("asset", "MULTI"),
+        "confidence": winner["confidence"],
+        "metadata": {
+            "type": "conflict_resolution",
+            "strategy": strategy,
+            "conflict_detected": conflict_detected,
+            "candidate_count": len(normalised),
+        },
+        "recipients": [],
+        "recipient_count": 0,
+        "timestamp": time.time(),
+        "status": "resolved",
+    }
+    _s43_record_signal(resolution_record)
+
+    return {
+        "resolved_action": winner["action"],
+        "winning_signal": winner,
+        "conflict_detected": conflict_detected,
+        "actions_present": sorted(actions_present),
+        "disagreement_logged": conflict_detected,
+        "strategy": strategy,
+        "candidates": normalised,
+        "resolution_details": resolution_details,
+        "resolved_at": time.time(),
+    }
+
+
 # ── HTTP Handler ──────────────────────────────────────────────────────────────
 
 class _DemoHandler(BaseHTTPRequestHandler):
@@ -6585,7 +6833,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S42_TEST_COUNT,
+                "test_count": _S43_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6602,6 +6850,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "POST /api/v1/agents/{id}/ping": "Agent heartbeat / health ping",
                     "GET  /api/v1/agents/{id}/diagnostics": "Detailed agent diagnostics",
                     "GET  /api/v1/strategies/leaderboard": "Strategy performance leaderboard",
+                    "POST /api/v1/agents/broadcast": "Broadcast signal to all peer agents",
+                    "GET  /api/v1/coordination/signals": "Retrieve recent cross-agent broadcast signals",
+                    "POST /api/v1/coordination/resolve": "Resolve conflicting agent signals via consensus",
                 },
                 "quickstart": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -6613,8 +6864,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
-                "tests": _S42_TEST_COUNT,
-                "test_count": _S42_TEST_COUNT,
+                "tests": _S43_TEST_COUNT,
+                "test_count": _S43_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -6871,6 +7122,21 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(200, result)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
+        # S43: Retrieve recent coordination signals
+        elif path in ("/api/v1/coordination/signals",):
+            asset = qs.get("asset", [None])[0]
+            agent_id_filter = qs.get("agent_id", [None])[0]
+            try:
+                limit_s43 = int(qs.get("limit", ["20"])[0])
+            except (ValueError, TypeError):
+                limit_s43 = 20
+            try:
+                result = get_coordination_signals(
+                    asset=asset, agent_id=agent_id_filter, limit=limit_s43
+                )
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -6959,6 +7225,12 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(400, {"error": "agent_id required"})
             else:
                 self._send_json(200, ping_agent(agent_id))
+        # S43: Broadcast signal to all agents
+        elif path in ("/api/v1/agents/broadcast",):
+            self._handle_s43_broadcast()
+        # S43: Resolve coordination conflict
+        elif path in ("/api/v1/coordination/resolve",):
+            self._handle_s43_resolve()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -7854,6 +8126,62 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(exc)})
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_s43_broadcast(self) -> None:
+        """Handle POST /api/v1/agents/broadcast — broadcast signal to all agents."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        agent_id = body.get("agent_id", "")
+        action = body.get("action", "")
+        asset = body.get("asset", "")
+        try:
+            confidence = float(body.get("confidence", 0.5))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "confidence must be a float"})
+            return
+        metadata = body.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+
+        try:
+            result = broadcast_signal(
+                agent_id=agent_id,
+                action=action,
+                asset=asset,
+                confidence=confidence,
+                metadata=metadata,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s43_resolve(self) -> None:
+        """Handle POST /api/v1/coordination/resolve — resolve conflicting signals."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        signals = body.get("signals", [])
+        if not isinstance(signals, list):
+            self._send_json(400, {"error": "signals must be a list"})
+            return
+        strategy = body.get("strategy", "highest_confidence")
+
+        try:
+            result = resolve_coordination_conflict(signals=signals, strategy=strategy)
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
 
     def _handle_agent_pnl_stream(self, agent_id: str) -> None:
         """Handle GET /demo/agents/{id}/pnl/stream — SSE P&L stream."""

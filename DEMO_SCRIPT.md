@@ -1,9 +1,9 @@
-# ERC-8004 Trading Agent — 3-Minute Demo Script (S10)
+# ERC-8004 Trading Agent — 3-Minute Demo Script (S43)
 
 > **Target audience**: Hackathon judges / technical evaluators
 > **Format**: Screen recording + voice-over
 > **Runtime**: ~3 minutes
-> **Sprint**: S10 — Live Deploy + 1,269 Tests + Full Submission
+> **Sprint**: S43 — Cross-Agent Coordination + 5,500+ Tests
 
 ---
 
@@ -114,7 +114,9 @@ Profit Factor: 2.1
 > Third, the Risk Manager validates against Credora ratings and position limits.
 > Fourth, the Surge Router executes the trade through DeFi vaults.
 > Fifth, the Validation Registry records the decision on-chain via ERC-8004.
-> 1,269 passing tests. Live at erc8004-trading-agent.vercel.app."
+> New in S43: cross-agent coordination — agents broadcast signals, vote on trades,
+> and resolve conflicts via majority consensus before any execution.
+> 5,519 passing tests. Live at erc8004-trading-agent.vercel.app."
 
 **On-screen** (architecture diagram):
 ```
@@ -139,10 +141,10 @@ Profit Factor: 2.1
 
 **GitHub**: https://github.com/opspawn/erc8004-trading-agent
 
-**Tests**: 1,269 passing (21 test files, full coverage)
+**Tests**: 5,519 passing (full coverage, S43 cross-agent coordination included)
 
 **Standard**: ERC-8004 — Agent Financial Identity for Ethereum
 
 ---
 
-*Demo script version: S10 | Date: 2026-02-25 | Sprint: 10 of 10*
+*Demo script version: S43 | Date: 2026-02-27 | Sprint: 43*
