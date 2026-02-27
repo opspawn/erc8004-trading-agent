@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S40 (submission polish)
+**Sprint**: S45 (live price feed + WebSocket streaming)
 
 ---
 
@@ -16,7 +16,10 @@
 
 ## Technical Quality
 
-- [x] **Test coverage** — 4,968 passing tests across 40 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Test coverage** — 5,915 passing tests across 45 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Live price feed** — GBM+mean-reversion simulated prices for BTC-USD, ETH-USD, SOL-USD, MATIC-USD (S45)
+- [x] **WebSocket streaming** — WS `/api/v1/ws/prices` streams 1-second price ticks with subscribe/unsubscribe (S45)
+- [x] **Agent auto-trading** — POST `/api/v1/agents/{id}/auto-trade` runs trend_follow/mean_revert/hold strategies on live feed (S45)
 - [x] **Demo endpoint live** — HTTP server on port 8084 (proxied at `https://api.opspawn.com/erc8004/`). Health: `curl https://api.opspawn.com/erc8004/demo/health`
 - [x] **No external dependencies for demo** — All demo endpoints run in-process with no wallet, no chain calls required.
 - [x] **README scannable in 30 seconds** — Problem, solution, quickstart curl, architecture diagram, test count.

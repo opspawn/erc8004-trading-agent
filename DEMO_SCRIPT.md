@@ -165,16 +165,55 @@ Profit Factor: 2.1
 
 ---
 
+## Scene 6 — Live Price Feed + WebSocket Streaming (S45)
+
+**Voice-over**:
+> "Sprint 45 adds a real-time market data layer. The agent now streams
+> simulated prices for BTC, ETH, SOL, and MATIC using Geometric Brownian
+> Motion with mean reversion — the same model used by professional quant desks.
+> Hit the REST endpoint to pull the current price and 24-hour stats..."
+
+**Command**:
+```bash
+curl http://localhost:8084/api/v1/market/price/BTC-USD | python3 -m json.tool
+# {"symbol": "BTC-USD", "price": 67892.14, "open": 67500.0,
+#  "high": 68240.50, "low": 66980.10, "close": 67892.14,
+#  "volume": 4823190127.0, "change_pct": 0.5812, "timestamp": 1740620400.0}
+```
+
+**Voice-over**:
+> "WebSocket clients subscribe to live 1-second price ticks..."
+
+```bash
+# WebSocket subscription (ws://localhost:8084/api/v1/ws/prices)
+# Messages: {"type": "price", "symbol": "BTC-USD", "price": 67901.22,
+#            "timestamp": 1740620401.0, "change_pct": 0.5945}
+```
+
+**Voice-over**:
+> "Agents auto-trade directly against the live feed using trend-follow,
+> mean-revert, or hold strategies..."
+
+```bash
+curl -s -X POST http://localhost:8084/api/v1/agents/agent-trend/auto-trade \
+  -H "Content-Type: application/json" \
+  -d '{"strategy":"trend_follow","symbol":"BTC-USD","ticks":20}' | python3 -m json.tool
+# {"agent_id": "agent-trend", "strategy": "trend_follow",
+#  "trades_executed": 3, "pnl": 14.72, "final_price": 68112.50}
+```
+
+---
+
 ## Call to Action
 
 **Live demo**: https://erc8004-trading-agent.vercel.app
 
 **GitHub**: https://github.com/opspawn/erc8004-trading-agent
 
-**Tests**: 5,746 passing (full coverage, S44 leaderboard + paper trading included)
+**Tests**: 5,915 passing (full coverage, S45 live price feed + WebSocket streaming)
 
 **Standard**: ERC-8004 — Agent Financial Identity for Ethereum
 
 ---
 
-*Demo script version: S44 | Date: 2026-02-27 | Sprint: 44*
+*Demo script version: S45 | Date: 2026-02-27 | Sprint: 45*

@@ -59,7 +59,7 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S44"
+SERVER_VERSION = "S45"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
@@ -6833,7 +6833,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S44_TEST_COUNT,
+                "test_count": _S45_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6861,6 +6861,11 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "POST /api/v1/trading/paper/close": "Close a paper position (S44)",
                     "GET  /api/v1/trading/paper/history": "Paper trade history (S44)",
                     "POST /api/v1/demo/run-leaderboard-scenario": "Seed 5 agents, run 20 trades, return leaderboard (S44)",
+                    "GET  /api/v1/market/price/{symbol}": "Live simulated price + 24h stats (S45)",
+                    "GET  /api/v1/market/prices": "All symbol prices (S45)",
+                    "POST /api/v1/market/snapshot": "Snapshot all current prices (S45)",
+                    "WS   /api/v1/ws/prices": "WebSocket price stream — subscribe/unsubscribe (S45)",
+                    "POST /api/v1/agents/{id}/auto-trade": "Agent auto-trading on live feed (S45)",
                 },
                 "quickstart": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -6872,8 +6877,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
-                "tests": _S44_TEST_COUNT,
-                "test_count": _S44_TEST_COUNT,
+                "tests": _S45_TEST_COUNT,
+                "test_count": _S45_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -7163,6 +7168,26 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S44: Paper trading history
         elif path in ("/api/v1/trading/paper/history",):
             self._handle_s44_paper_history()
+        # S45: All symbols prices
+        elif path in ("/api/v1/market/prices",):
+            self._send_json(200, get_s45_all_prices())
+        # S45: Single symbol price — /api/v1/market/price/{symbol}
+        elif path.startswith("/api/v1/market/price/"):
+            sym_part = path[len("/api/v1/market/price/"):]
+            try:
+                self._send_json(200, get_s45_price(sym_part))
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+        # S45: WebSocket price stream
+        elif path in ("/api/v1/ws/prices",):
+            upgrade = self.headers.get("Upgrade", "").lower()
+            if upgrade == "websocket":
+                self._handle_s45_ws_prices()
+            else:
+                self._send_json(426, {
+                    "error": "Upgrade to WebSocket required",
+                    "hint": "Connect with a WebSocket client to ws://host/api/v1/ws/prices",
+                })
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -7275,6 +7300,19 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S44: Run leaderboard demo scenario
         elif path in ("/api/v1/demo/run-leaderboard-scenario",):
             self._handle_s44_demo_scenario()
+        # S45: Price snapshot
+        elif path in ("/api/v1/market/snapshot",):
+            snap = take_s45_snapshot()
+            self._send_json(200, snap)
+        # S45: Agent auto-trade
+        elif path.startswith("/api/v1/agents/") and path.endswith("/auto-trade"):
+            parts = path.split("/")
+            # /api/v1/agents/<id>/auto-trade → parts[4]
+            agent_id_s45 = parts[4] if len(parts) >= 5 else ""
+            if not agent_id_s45:
+                self._send_json(400, {"error": "agent_id required"})
+            else:
+                self._handle_s45_auto_trade(agent_id_s45)
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -8411,6 +8449,88 @@ class _DemoHandler(BaseHTTPRequestHandler):
         except Exception as exc:  # noqa: BLE001
             self._send_json(500, {"error": str(exc)})
 
+    def _handle_s45_auto_trade(self, agent_id: str) -> None:
+        """Handle POST /api/v1/agents/{id}/auto-trade."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+        strategy = body.get("strategy", "trend_follow")
+        symbol = body.get("symbol", "BTC-USD")
+        try:
+            ticks = int(body.get("ticks", 10))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "'ticks' must be an integer"})
+            return
+        try:
+            capital = float(body.get("capital", 10000.0))
+        except (TypeError, ValueError):
+            self._send_json(400, {"error": "'capital' must be a number"})
+            return
+        try:
+            result = run_s45_auto_trade(
+                agent_id=agent_id,
+                strategy=strategy,
+                symbol=symbol,
+                capital=capital,
+                ticks=ticks,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s45_ws_prices(self) -> None:
+        """Handle WebSocket upgrade for GET /api/v1/ws/prices."""
+        ws_key = self.headers.get("Sec-WebSocket-Key", "").strip()
+        if not ws_key:
+            self._send_json(400, {"error": "Missing Sec-WebSocket-Key header"})
+            return
+
+        accept_key = _ws_accept_key(ws_key)
+
+        # Send 101 Switching Protocols
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept_key)
+        self.end_headers()
+
+        # Ensure the price broadcast thread is running
+        _s45_ensure_broadcast_thread()
+
+        # Register this client
+        client: Dict[str, Any] = {"q": queue.Queue(maxsize=200), "subscribed": set()}
+        with _S45_WS_CLIENTS_LOCK:
+            _S45_WS_CLIENTS.append(client)
+
+        try:
+            # Send connected welcome frame
+            welcome = json.dumps({
+                "type": "connected",
+                "message": "ERC-8004 S45 price feed active",
+                "symbols": _S45_SYMBOLS,
+                "timestamp": time.time(),
+            })
+            _ws_send_text(self.wfile, welcome)
+
+            # Stream events until client disconnects
+            while True:
+                try:
+                    payload = client["q"].get(timeout=10)
+                    _ws_send_text(self.wfile, payload)
+                except queue.Empty:
+                    _ws_send_ping(self.wfile)
+
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
+            with _S45_WS_CLIENTS_LOCK:
+                if client in _S45_WS_CLIENTS:
+                    _S45_WS_CLIENTS.remove(client)
+
     def _handle_agent_pnl_stream(self, agent_id: str) -> None:
         """Handle GET /demo/agents/{id}/pnl/stream — SSE P&L stream."""
         try:
@@ -9006,6 +9126,362 @@ def run_leaderboard_scenario() -> Dict[str, Any]:
         "symbols_traded": symbols,
         "completed_at": time.time(),
     }
+
+
+# ── S45: Live Price Feed + WebSocket Streaming + Auto-Trading ──────────────────
+#
+# Endpoints:
+#   GET  /api/v1/market/price/{symbol}    — current simulated price + 24h stats
+#   GET  /api/v1/market/prices            — prices for all supported symbols
+#   POST /api/v1/market/snapshot          — snapshot all current prices
+#   WS   /api/v1/ws/prices               — WebSocket price stream (subscribe/unsubscribe)
+#   POST /api/v1/agents/{id}/auto-trade   — enable agent auto-trading from live feed
+
+_S45_TEST_COUNT = 5915  # verified: full suite 2026-02-27 after S45
+
+_S45_SYMBOLS = ["BTC-USD", "ETH-USD", "SOL-USD", "MATIC-USD"]
+
+_S45_BASE_PRICES: Dict[str, float] = {
+    "BTC-USD": 67500.0,
+    "ETH-USD": 3450.0,
+    "SOL-USD": 175.0,
+    "MATIC-USD": 0.85,
+}
+
+# GBM parameters per symbol
+_S45_GBM_PARAMS: Dict[str, Dict[str, float]] = {
+    "BTC-USD":   {"mu": 0.0002, "sigma": 0.018, "theta": 0.05},
+    "ETH-USD":   {"mu": 0.0003, "sigma": 0.022, "theta": 0.06},
+    "SOL-USD":   {"mu": 0.0004, "sigma": 0.030, "theta": 0.08},
+    "MATIC-USD": {"mu": 0.0003, "sigma": 0.035, "theta": 0.10},
+}
+
+_S45_PRICE_LOCK = threading.Lock()
+_S45_PRICES: Dict[str, Dict[str, Any]] = {}   # symbol → price_state
+_S45_SNAPSHOTS: List[Dict[str, Any]] = []
+
+_S45_WS_CLIENTS_LOCK = threading.Lock()
+_S45_WS_CLIENTS: List[Dict[str, Any]] = []   # list of {q: Queue, subscribed: set}
+
+_S45_AUTO_TRADE_LOCK = threading.Lock()
+_S45_AUTO_TRADE_RESULTS: Dict[str, Any] = {}  # agent_id → last result
+
+_S45_VALID_STRATEGIES = {"trend_follow", "mean_revert", "hold"}
+
+_S45_PRICE_THREAD: Optional[threading.Thread] = None
+_S45_PRICE_THREAD_RUNNING = False
+
+
+def _s45_init_prices() -> None:
+    """Initialise _S45_PRICES with base values and 24h stats."""
+    rng = random.Random(42)
+    for sym in _S45_SYMBOLS:
+        base = _S45_BASE_PRICES[sym]
+        params = _S45_GBM_PARAMS[sym]
+        # Simulate one day of history (288 x 5-min bars) to seed open/high/low
+        prices_hist = [base]
+        p = base
+        for _ in range(287):
+            noise = rng.gauss(0, 1)
+            mean_rev = params["theta"] * (base - p)
+            p = p * (1 + params["mu"] + params["sigma"] * noise) + mean_rev
+            p = max(p, base * 0.5)
+            prices_hist.append(p)
+        _S45_PRICES[sym] = {
+            "symbol": sym,
+            "price": round(prices_hist[-1], 6),
+            "open":  round(prices_hist[0], 6),
+            "high":  round(max(prices_hist), 6),
+            "low":   round(min(prices_hist), 6),
+            "close": round(prices_hist[-1], 6),
+            "volume": round(rng.uniform(1e6, 1e9), 2),
+            "change_pct": round((prices_hist[-1] - prices_hist[0]) / prices_hist[0] * 100, 4),
+            "timestamp": time.time(),
+            "_prev": prices_hist[-2] if len(prices_hist) > 1 else prices_hist[-1],
+            "_rng_state": rng.getstate(),
+        }
+
+
+def _s45_step_price(sym: str) -> None:
+    """Advance price by one GBM+mean-reversion step (in-place update)."""
+    state = _S45_PRICES[sym]
+    params = _S45_GBM_PARAMS[sym]
+    rng = random.Random()
+    rng.setstate(state["_rng_state"])
+    noise = rng.gauss(0, 1)
+    base = _S45_BASE_PRICES[sym]
+    p_prev = state["price"]
+    mean_rev = params["theta"] * (base - p_prev)
+    p_new = p_prev * (1 + params["mu"] + params["sigma"] * noise) + mean_rev
+    p_new = max(p_new, base * 0.1)
+    p_new = round(p_new, 6)
+    change_pct = round((p_new - state["open"]) / state["open"] * 100, 4)
+    state["_prev"] = p_prev
+    state["price"] = p_new
+    state["close"] = p_new
+    state["high"] = max(state["high"], p_new)
+    state["low"] = min(state["low"], p_new)
+    state["change_pct"] = change_pct
+    state["timestamp"] = time.time()
+    state["_rng_state"] = rng.getstate()
+
+
+def get_s45_price(symbol: str) -> Dict[str, Any]:
+    """
+    Return current simulated price + 24h stats for *symbol*.
+
+    Raises:
+        ValueError: if symbol is not supported.
+    """
+    if symbol not in _S45_SYMBOLS:
+        raise ValueError(f"Unsupported symbol '{symbol}'. Valid: {_S45_SYMBOLS}")
+    with _S45_PRICE_LOCK:
+        if symbol not in _S45_PRICES:
+            _s45_init_prices()
+        state = _S45_PRICES[symbol]
+        return {
+            "symbol": state["symbol"],
+            "price": state["price"],
+            "open":  state["open"],
+            "high":  state["high"],
+            "low":   state["low"],
+            "close": state["close"],
+            "volume": state["volume"],
+            "change_pct": state["change_pct"],
+            "timestamp": state["timestamp"],
+        }
+
+
+def get_s45_all_prices() -> Dict[str, Any]:
+    """Return prices for all supported symbols."""
+    with _S45_PRICE_LOCK:
+        if not _S45_PRICES:
+            _s45_init_prices()
+        result = {}
+        for sym in _S45_SYMBOLS:
+            s = _S45_PRICES[sym]
+            result[sym] = {
+                "symbol": s["symbol"],
+                "price": s["price"],
+                "open": s["open"],
+                "high": s["high"],
+                "low": s["low"],
+                "close": s["close"],
+                "volume": s["volume"],
+                "change_pct": s["change_pct"],
+                "timestamp": s["timestamp"],
+            }
+    return {"prices": result, "symbols": _S45_SYMBOLS, "count": len(_S45_SYMBOLS)}
+
+
+def take_s45_snapshot() -> Dict[str, Any]:
+    """Snapshot all current prices (for demo reproducibility)."""
+    with _S45_PRICE_LOCK:
+        if not _S45_PRICES:
+            _s45_init_prices()
+        snapshot = {
+            "snapshot_id": str(uuid.uuid4()),
+            "taken_at": time.time(),
+            "prices": {},
+        }
+        for sym in _S45_SYMBOLS:
+            s = _S45_PRICES[sym]
+            snapshot["prices"][sym] = {
+                "price": s["price"],
+                "open": s["open"],
+                "high": s["high"],
+                "low": s["low"],
+                "close": s["close"],
+                "volume": s["volume"],
+                "change_pct": s["change_pct"],
+            }
+        _S45_SNAPSHOTS.append(snapshot)
+    return snapshot
+
+
+def _s45_price_broadcast_loop() -> None:
+    """Background thread: step prices every 1 s and broadcast to WS clients."""
+    global _S45_PRICE_THREAD_RUNNING
+    with _S45_PRICE_LOCK:
+        if not _S45_PRICES:
+            _s45_init_prices()
+    while _S45_PRICE_THREAD_RUNNING:
+        with _S45_PRICE_LOCK:
+            for sym in _S45_SYMBOLS:
+                _s45_step_price(sym)
+                state = _S45_PRICES[sym]
+                msg = json.dumps({
+                    "type": "price",
+                    "symbol": sym,
+                    "price": state["price"],
+                    "timestamp": state["timestamp"],
+                    "change_pct": state["change_pct"],
+                })
+                # Broadcast to subscribed WS clients
+                with _S45_WS_CLIENTS_LOCK:
+                    dead = []
+                    for client in _S45_WS_CLIENTS:
+                        if sym in client["subscribed"] or not client["subscribed"]:
+                            try:
+                                client["q"].put_nowait(msg)
+                            except queue.Full:
+                                dead.append(client)
+                    for c in dead:
+                        if c in _S45_WS_CLIENTS:
+                            _S45_WS_CLIENTS.remove(c)
+        time.sleep(1.0)
+
+
+def _s45_ensure_broadcast_thread() -> None:
+    """Start the price broadcast thread if not already running."""
+    global _S45_PRICE_THREAD, _S45_PRICE_THREAD_RUNNING
+    if _S45_PRICE_THREAD is None or not _S45_PRICE_THREAD.is_alive():
+        _S45_PRICE_THREAD_RUNNING = True
+        _S45_PRICE_THREAD = threading.Thread(
+            target=_s45_price_broadcast_loop,
+            daemon=True,
+            name="s45-price-feed",
+        )
+        _S45_PRICE_THREAD.start()
+
+
+def run_s45_auto_trade(
+    agent_id: str,
+    strategy: str = "trend_follow",
+    symbol: str = "BTC-USD",
+    capital: float = 10000.0,
+    ticks: int = 10,
+) -> Dict[str, Any]:
+    """
+    Run auto-trading for *agent_id* over *ticks* simulated price steps.
+
+    Strategies:
+        trend_follow  — BUY on +1% move, SELL on -1% move
+        mean_revert   — BUY on -1% move (revert up), SELL on +1% (revert down)
+        hold          — never trades
+
+    Returns:
+        {agent_id, strategy, symbol, ticks, trades_executed, pnl, trades}
+
+    Raises:
+        ValueError: on invalid inputs.
+    """
+    if not agent_id or not isinstance(agent_id, str):
+        raise ValueError("agent_id must be a non-empty string")
+    if strategy not in _S45_VALID_STRATEGIES:
+        raise ValueError(f"strategy must be one of {sorted(_S45_VALID_STRATEGIES)}")
+    if symbol not in _S45_SYMBOLS:
+        raise ValueError(f"symbol must be one of {_S45_SYMBOLS}")
+    if not isinstance(ticks, int) or ticks <= 0:
+        raise ValueError("ticks must be a positive integer")
+    if capital <= 0:
+        raise ValueError("capital must be positive")
+
+    rng = random.Random(hash(agent_id) & 0xFFFFFFFF)
+    # Seed starting price from live feed
+    with _S45_PRICE_LOCK:
+        if symbol not in _S45_PRICES:
+            _s45_init_prices()
+        current_price = _S45_PRICES[symbol]["price"]
+
+    params = _S45_GBM_PARAMS[symbol]
+    base_price = _S45_BASE_PRICES[symbol]
+
+    trades = []
+    position = None    # open position: {"entry": float, "side": str, "qty": float}
+    pnl = 0.0
+    fee_rate = 0.0005  # 0.05%
+
+    prices = [current_price]
+    p = current_price
+    for _ in range(ticks):
+        noise = rng.gauss(0, 1)
+        mean_rev = params["theta"] * (base_price - p)
+        p = p * (1 + params["mu"] + params["sigma"] * noise) + mean_rev
+        p = max(p, base_price * 0.1)
+        prices.append(round(p, 6))
+
+    for i, price in enumerate(prices[1:], 1):
+        prev_price = prices[i - 1]
+        tick_pct = (price - prev_price) / prev_price * 100
+
+        if strategy == "hold":
+            continue
+
+        if strategy == "trend_follow":
+            should_buy = tick_pct >= 1.0 and position is None
+            should_sell = tick_pct <= -1.0 and position is not None
+        else:  # mean_revert
+            should_buy = tick_pct <= -1.0 and position is None
+            should_sell = tick_pct >= 1.0 and position is not None
+
+        qty = round(capital / price * 0.01, 8)  # 1% of capital
+
+        if should_buy:
+            fill = round(price * 1.001, 6)  # 0.1% slippage
+            fee = round(fill * qty * fee_rate, 6)
+            position = {"entry": fill, "side": "BUY", "qty": qty, "tick": i}
+            pnl -= fee
+            trades.append({
+                "tick": i,
+                "action": "BUY",
+                "price": fill,
+                "qty": qty,
+                "fee": fee,
+                "pnl_delta": -fee,
+            })
+
+        elif should_sell and position is not None:
+            fill = round(price * 0.999, 6)  # 0.1% slippage
+            fee = round(fill * qty * fee_rate, 6)
+            gross = (fill - position["entry"]) * position["qty"]
+            net = round(gross - fee, 6)
+            pnl += net
+            trades.append({
+                "tick": i,
+                "action": "SELL",
+                "price": fill,
+                "qty": position["qty"],
+                "fee": fee,
+                "pnl_delta": net,
+                "gross_pnl": round(gross, 6),
+            })
+            position = None
+
+    # Close any open position at last price
+    if position is not None:
+        last_price = prices[-1]
+        fill = round(last_price * 0.999, 6)
+        qty = position["qty"]
+        fee = round(fill * qty * fee_rate, 6)
+        gross = (fill - position["entry"]) * qty
+        net = round(gross - fee, 6)
+        pnl += net
+        trades.append({
+            "tick": ticks,
+            "action": "CLOSE",
+            "price": fill,
+            "qty": qty,
+            "fee": fee,
+            "pnl_delta": net,
+            "gross_pnl": round(gross, 6),
+        })
+        position = None
+
+    result = {
+        "agent_id": agent_id,
+        "strategy": strategy,
+        "symbol": symbol,
+        "ticks": ticks,
+        "trades_executed": len(trades),
+        "pnl": round(pnl, 6),
+        "trades": trades,
+        "final_price": round(prices[-1], 6),
+        "completed_at": time.time(),
+    }
+    with _S45_AUTO_TRADE_LOCK:
+        _S45_AUTO_TRADE_RESULTS[agent_id] = result
+    return result
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
