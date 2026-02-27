@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S51 (server updated to S50, submission prep verified, 20 new server tests)
+**Sprint**: S52 (interactive demo UI + live-data endpoint, 24 new tests, 6,210 total)
 
 ---
 
@@ -16,7 +16,7 @@
 
 ## Technical Quality
 
-- [x] **Test coverage** — 6,190 passing tests across 51 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Test coverage** — 6,210 passing tests across 52 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
 - [x] **Portfolio risk engine** — VaR at 95%/99% (historical simulation), Sharpe/Sortino/Calmar, cross-symbol correlation matrix (S46)
 - [x] **Position sizing** — Volatility-based, Half-Kelly, fixed-fraction; POST `/api/v1/risk/position-size` (S46)
 - [x] **Exposure dashboard** — Per-symbol exposure + Herfindahl concentration index; GET `/api/v1/risk/exposure` (S46)
@@ -30,9 +30,9 @@
 - [x] **No external dependencies for demo** — All demo endpoints run in-process with no wallet, no chain calls required.
 - [x] **README scannable in 30 seconds** — Problem, solution, quickstart curl, architecture diagram, test count.
 - [x] **Demo recorder** — `scripts/record_demo.py` captures all 5 demo steps; output in `docs/demo-screenshots/` (S49)
-- [x] **Demo HTML page** — `docs/demo.html` with embedded data for all 5 steps, judge-friendly terminal theme (S50)
+- [x] **Interactive HTML demo** — `docs/demo.html` with live fetch buttons for all 5 steps; `/demo/ui` serves it, `/demo/live-data` returns all 5 in one call (S52)
 - [x] **render.yaml deploy config** — Configured for Render.com deployment with health check path (S49)
-- [x] **Server updated to S50** — Live server at port 8084 reports version S50, 6185 tests (S51)
+- [x] **Server updated to S52** — Live server at port 8084 reports version S52, 6210 tests (S52)
 
 ## Differentiators
 
@@ -49,7 +49,7 @@
 - [x] **SUBMISSION.md** — Technical narrative and architecture deep-dive.
 - [x] **DEMO_SCRIPT.md** — Video script for demo recording.
 - [x] **Video script ready** — See `DEMO_SCRIPT.md` for 3-minute demo outline.
-- [x] **Demo HTML page** — `docs/demo.html` with embedded live demo outputs (S50)
+- [x] **Interactive HTML demo** — `docs/demo.html` with live fetch buttons for all 5 demo steps (S52)
 - [x] **Demo screenshots captured** — All 5 steps in `docs/demo-screenshots/` (S49)
 
 ## Live Endpoints
@@ -57,7 +57,7 @@
 ```bash
 # Health check
 curl https://api.opspawn.com/erc8004/demo/health
-# Expected: {"status":"ok","tests":6170,"version":"S50",...}
+# Expected: {"status":"ok","tests":6210,"version":"S52",...}
 
 # Full demo pipeline
 curl -s -X POST 'https://api.opspawn.com/erc8004/demo/run?ticks=10' | python3 -m json.tool
@@ -80,9 +80,9 @@ curl -s -X POST 'https://api.opspawn.com/erc8004/api/v1/demo/showcase' | python3
 ## Pre-Submission Final Check (March 22)
 
 - [ ] Demo server is running and `/health` returns 200
-- [ ] All 6,170+ tests pass (`python3 -m pytest tests/ -q --tb=no`)
+- [ ] All 6,210+ tests pass (`python3 -m pytest tests/ -q --tb=no`)
 - [ ] Contract addresses in `contracts/deployment.json` are correct
 - [ ] README links are valid
-- [ ] `docs/demo.html` opens in browser and shows all 5 demo steps
+- [ ] `docs/demo.html` opens in browser and 'Run All' button fetches live data for all 5 steps
 - [ ] Video demo is recorded and uploaded
 - [ ] lablab.ai submission form filled out with GitHub URL + demo URL

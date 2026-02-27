@@ -59,11 +59,12 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S50"
+SERVER_VERSION = "S52"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
 _S50_TEST_COUNT = 6185  # verified: full suite after S50 (demo HTML + submission)
+_S52_TEST_COUNT = 6210  # verified: full suite after S52 (interactive demo UI)
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -5867,6 +5868,34 @@ def cross_train_agents(
 _SERVER_START_TIME = time.time()
 _seed_feed_buffer()
 
+# ── S52: Demo UI helpers ───────────────────────────────────────────────────────
+
+_DEMO_HTML_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+    "docs", "demo.html",
+)
+
+
+def get_s52_live_data() -> Dict[str, Any]:
+    """Return all 5 demo sections in one JSON call for the interactive HTML page."""
+    return {
+        "health": {
+            "status": "ok",
+            "service": "ERC-8004 Demo Server",
+            "version": SERVER_VERSION,
+            "sprint": SERVER_VERSION,
+            "tests": _S52_TEST_COUNT,
+            "test_count": _S52_TEST_COUNT,
+            "dev_mode": X402_DEV_MODE,
+        },
+        "swarm_vote": get_s46_swarm_vote(symbol="BTC-USD", signal_type="BUY"),
+        "risk_portfolio": get_s46_portfolio_risk(),
+        "performance": get_s48_performance_summary(),
+        "showcase": get_s47_showcase(),
+        "generated_at": time.time(),
+        "version": SERVER_VERSION,
+    }
+
 
 # ── S41: Strategy Compare Backtest ─────────────────────────────────────────────
 # POST /api/v1/strategies/compare
@@ -6815,6 +6844,21 @@ class _DemoHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _serve_demo_ui(self) -> None:
+        """Serve docs/demo.html as text/html."""
+        try:
+            with open(_DEMO_HTML_PATH, "rb") as fh:
+                body = fh.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("X-ERC8004-Version", SERVER_VERSION)
+            self.end_headers()
+            self.wfile.write(body)
+        except FileNotFoundError:
+            self._send_json(404, {"error": "demo.html not found", "path": _DEMO_HTML_PATH})
+
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -6834,7 +6878,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S46_TEST_COUNT,
+                "test_count": _S52_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6886,8 +6930,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
                 "sprint": SERVER_VERSION,
-                "tests": _S50_TEST_COUNT,
-                "test_count": _S50_TEST_COUNT,
+                "tests": _S52_TEST_COUNT,
+                "test_count": _S52_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -6896,7 +6940,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "10-agent swarm with 6 strategies",
                     "Position sizing (Kelly/volatility/fixed)",
                     "Exposure dashboard with concentration index",
-                    "Performance summary endpoint (/api/v1/performance/summary)",
+                    "Interactive HTML demo UI (/demo/ui)",
                 ],
             })
         elif path in ("/demo/info", "/info"):
@@ -7216,6 +7260,12 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S48: Performance summary
         elif path in ("/api/v1/performance/summary",):
             self._send_json(200, get_s48_performance_summary())
+        # S52: Interactive demo UI HTML page
+        elif path in ("/demo/ui", "/demo/ui/"):
+            self._serve_demo_ui()
+        # S52: Live data (all 5 demo sections in one call)
+        elif path in ("/demo/live-data", "/demo/live-data/"):
+            self._send_json(200, get_s52_live_data())
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
