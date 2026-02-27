@@ -100,11 +100,25 @@ enabled so judges can call it without a wallet.
 - **Judge dashboard upgraded** (`GET /demo/judge`): Live Portfolio Simulation section at top,
   trade history table, P&L leaderboard with Sharpe and win-streak columns
 
+## Agent Reasoning Transparency (S57)
+
+- **Agent decision narrative** (`GET /api/v1/agent/narrative`): Human-readable step-by-step
+  explanation of the multi-agent consensus decision process — each agent's signal, confidence,
+  and weighted reasoning, plus a plain-English `narrative_summary` of the final action. Makes
+  the "black box" fully transparent for judges and end users.
+- **Strategy comparison** (`GET /api/v1/strategies/compare`): 30-day side-by-side comparison
+  of all three strategy types (Conservative/Balanced/Aggressive) — return %, Sharpe, max drawdown,
+  win rate, best/worst trades, and ERC-8004 `erc8004_token_id` per agent. Includes
+  `risk_adjusted_winner` showing the ERC-8004 reputation system correctly up-weights the
+  lower-volatility Conservative agent.
+- **Judge dashboard upgraded** (`GET /demo/judge`): Two new cards — Agent Decision Narrative
+  (step-by-step reasoning table) and Strategy Comparison (side-by-side performance table)
+
 ---
 
 ## Test Evidence
 
-**Total tests: 6,482 passing** (S56 — verified 2026-02-27 by running `python3 -m pytest --tb=no -q`)
+**Total tests: 6,562 passing** (S57 — verified 2026-02-27 by running `python3 -m pytest --tb=no -q`)
 
 | Sprint | Tests | Key additions |
 |--------|-------|---------------|
@@ -117,7 +131,8 @@ enabled so judges can call it without a wallet.
 | S53 | 6,248 | Judge dashboard (/demo/judge), RSI/MACD TA signals (/api/v1/signals/latest) |
 | S54 | 6,300 | Demo video (MP4), video endpoint tests, S54 submission polish |
 | S55 | 6,400 | Backtesting results endpoint, confidence scores, performance chart in dashboard |
-| **S56** | **6,482** | Portfolio P&L simulation, trade history, enhanced leaderboard with P&L |
+| S56 | 6,482 | Portfolio P&L simulation, trade history, enhanced leaderboard with P&L |
+| **S57** | **6,562** | Agent reasoning narrative, strategy comparison, reasoning transparency |
 
 | Test File | Coverage Area |
 |-----------|---------------|

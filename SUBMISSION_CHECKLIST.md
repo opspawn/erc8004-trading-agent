@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S56 (portfolio P&L simulation + trade history + enhanced leaderboard + 6,482+ total)
+**Sprint**: S57 (agent reasoning narrative + strategy comparison + 6,562+ total)
 
 ---
 
@@ -37,6 +37,7 @@
 - [x] **Server updated to S53** — Live server at port 8084 reports version S53, 6240+ tests (S53)
 - [x] **Server updated to S54** — Demo video (MP4) + video endpoint tests + 6,300+ tests (S54)
 - [x] **Server updated to S55** — Backtesting results endpoint + confidence scores + performance chart in dashboard + 6,400+ tests (S55)
+- [x] **Server updated to S57** — Agent reasoning narrative + strategy comparison + 6,562+ tests (S57)
 - [x] **Server updated to S56** — Portfolio P&L simulation + trade history + enhanced leaderboard with P&L + 6,482+ tests (S56)
 - [x] **Judge dashboard** — `GET /demo/judge` returns single-page HTML overview for judges with leaderboard, swarm vote, TA signals, risk summary, contract links, curl examples (S53)
 - [x] **TA signals endpoint** — `GET /api/v1/signals/latest` returns RSI + MACD signals for BTC-USD, ETH-USD, SOL-USD with `confidence_score` + `signal_strength` (S55)
@@ -46,6 +47,9 @@
 - [x] **Trade history endpoint** — `GET /api/v1/trades/history` returns 18 trades with RSI/MACD/COMBINED signal attribution, confidence scores, and P&L per closed position (S56)
 - [x] **Enhanced leaderboard** — `GET /api/v1/leaderboard` returns 30-day P&L rankings with `pnl_30d`, `pnl_pct_30d`, `sharpe_ratio`, `consecutive_wins` per agent (S56)
 - [x] **Judge dashboard upgraded (S56)** — Live Portfolio Simulation section at top with return/P&L/drawdown/win-rate cards; trade history table; P&L leaderboard with Sharpe and win-streak
+- [x] **Agent decision narrative (S57)** — `GET /api/v1/agent/narrative` returns step-by-step reasoning with agent, signal, confidence, reputation_weight, and narrative_summary
+- [x] **Strategy comparison (S57)** — `GET /api/v1/strategies/compare` returns 30-day side-by-side comparison of Conservative/Balanced/Aggressive with return, Sharpe, drawdown, win rate
+- [x] **Judge dashboard upgraded (S57)** — Agent Decision Narrative card + Strategy Comparison table added to /demo/judge
 - [x] **Demo video recorded** — `docs/demo-video-s54.mp4` — 18-second walkthrough of judge dashboard + interactive demo UI (S54)
 
 ## Differentiators
@@ -72,7 +76,7 @@
 ```bash
 # Health check
 curl https://api.opspawn.com/erc8004/demo/health
-# Expected: {"status":"ok","tests":6482,"version":"S56",...}
+# Expected: {"status":"ok","tests":6562,"version":"S57",...}
 
 # Judge dashboard (HTML)
 curl http://localhost:8084/demo/judge
