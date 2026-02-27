@@ -1,0 +1,13 @@
+{
+  "total_paper_trades": 0,
+  "total_pnl": 0.0,
+  "win_rate": 0.0,
+  "avg_trade_pnl": 0.0,
+  "best_trade": 0.0,
+  "worst_trade": 0.0,
+  "sharpe_ratio": 0.0,
+  "drawdown_pct": 0.0,
+  "active_agents": 10,
+  "version": "S48",
+  "note": "No completed paper trades yet \u2014 place orders via POST /api/v1/trading/paper/order"
+}

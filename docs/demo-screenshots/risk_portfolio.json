@@ -1,0 +1,80 @@
+{
+  "portfolio": {
+    "var_95": 0.042328,
+    "var_99": 0.055548,
+    "sharpe_ratio": 0.9955,
+    "sortino_ratio": 1.01,
+    "calmar_ratio": 1.9969,
+    "max_drawdown": 0.214974,
+    "n_symbols": 4,
+    "history_days": 252
+  },
+  "per_symbol": {
+    "BTC-USD": {
+      "var_95": 0.058319,
+      "var_99": 0.08566,
+      "sharpe": 0.9204,
+      "sortino": 0.9206,
+      "calmar": 1.1332,
+      "max_drawdown": 0.483906
+    },
+    "ETH-USD": {
+      "var_95": 0.066636,
+      "var_99": 0.105472,
+      "sharpe": 1.1445,
+      "sortino": 1.1498,
+      "calmar": 1.913,
+      "max_drawdown": 0.412161
+    },
+    "SOL-USD": {
+      "var_95": 0.087177,
+      "var_99": 0.125879,
+      "sharpe": -0.6946,
+      "sortino": -0.7274,
+      "calmar": -0.8457,
+      "max_drawdown": 0.686122
+    },
+    "MATIC-USD": {
+      "var_95": 0.112479,
+      "var_99": 0.15085,
+      "sharpe": 0.8435,
+      "sortino": 0.9144,
+      "calmar": 1.5509,
+      "max_drawdown": 0.619316
+    }
+  },
+  "correlation_matrix": {
+    "BTC-USD": {
+      "BTC-USD": 1.0,
+      "ETH-USD": 0.0167,
+      "SOL-USD": -0.0216,
+      "MATIC-USD": -0.0424
+    },
+    "ETH-USD": {
+      "BTC-USD": 0.0167,
+      "ETH-USD": 1.0,
+      "SOL-USD": -0.0027,
+      "MATIC-USD": -0.0041
+    },
+    "SOL-USD": {
+      "BTC-USD": -0.0216,
+      "ETH-USD": -0.0027,
+      "SOL-USD": 1.0,
+      "MATIC-USD": -0.0256
+    },
+    "MATIC-USD": {
+      "BTC-USD": -0.0424,
+      "ETH-USD": -0.0041,
+      "SOL-USD": -0.0256,
+      "MATIC-USD": 1.0
+    }
+  },
+  "symbols": [
+    "BTC-USD",
+    "ETH-USD",
+    "SOL-USD",
+    "MATIC-USD"
+  ],
+  "generated_at": 1772175292.6454248,
+  "version": "S46"
+}

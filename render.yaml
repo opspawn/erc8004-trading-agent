@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: erc8004-demo
+    env: python
+    buildCommand: pip install -r agent/requirements.txt
+    startCommand: python agent/demo_server.py
+    envVars:
+      - key: PORT
+        value: 8084
+      - key: DEV_MODE
+        value: "true"
+    healthCheckPath: /demo/health

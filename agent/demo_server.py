@@ -10309,7 +10309,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="ERC-8004 Demo Server")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", DEFAULT_PORT)))
     parser.add_argument("--dev-mode", action="store_true", default=True,
                         help="Bypass x402 payment gate (default: on)")
     args = parser.parse_args()

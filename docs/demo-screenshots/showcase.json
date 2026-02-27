@@ -1,0 +1,78 @@
+{
+  "showcase": "ERC-8004 Full Pipeline",
+  "version": "S47",
+  "total_duration_ms": 6.26,
+  "steps": [
+    {
+      "step": 1,
+      "label": "Live Price Tick \u2014 BTC-USD",
+      "duration_ms": 0.06,
+      "result": {
+        "symbol": "BTC-USD",
+        "price": 68046.75,
+        "bid": 68036.54,
+        "ask": 68058.55,
+        "volume_24h": 18711.01,
+        "change_24h_pct": -0.608,
+        "source": "demo_feed"
+      }
+    },
+    {
+      "step": 2,
+      "label": "10-Agent Swarm Vote \u2014 LONG BTC-USD",
+      "duration_ms": 0.17,
+      "result": {
+        "total_agents": 10,
+        "agree_count": 6,
+        "weighted_agree_fraction": 0.6313,
+        "consensus_reached": false,
+        "consensus_action": "HOLD",
+        "vote_summary": {
+          "BUY": 6,
+          "SELL": 4
+        }
+      }
+    },
+    {
+      "step": 3,
+      "label": "Risk Engine \u2014 VaR 95/99% + Kelly Position Size",
+      "duration_ms": 6.01,
+      "result": {
+        "portfolio_var_95": 0.042328,
+        "portfolio_var_99": 0.055548,
+        "portfolio_sharpe": 0.9955,
+        "btc_recommended_position_usd": 55852.0,
+        "btc_position_pct_of_capital": 0.5585,
+        "sizing_method": "volatility",
+        "rationale": "Risk budget $2000.00 / daily vol 0.0358"
+      }
+    },
+    {
+      "step": 4,
+      "label": "Paper Trade Execution \u2014 Consensus Decision",
+      "duration_ms": 0.01,
+      "result": {
+        "trade_id": "s47-showcase-1772175292",
+        "symbol": "BTC-USD",
+        "side": "HOLD",
+        "qty": 0.820912,
+        "fill_price": 68036.54,
+        "position_usd": 55852.0,
+        "fee_usd": 27.926,
+        "slippage_pct": 0.05,
+        "mode": "paper",
+        "driven_by": "swarm_consensus",
+        "agent_count": 10
+      }
+    }
+  ],
+  "summary": {
+    "btc_price": 68046.75,
+    "swarm_consensus": "HOLD",
+    "consensus_agents": "6/10",
+    "var_95": 0.042328,
+    "position_usd": 55852.0,
+    "trade_executed": "s47-showcase-1772175292"
+  },
+  "generated_at": 1772175292.658732
+}

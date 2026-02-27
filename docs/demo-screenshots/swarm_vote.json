@@ -1,0 +1,99 @@
+{
+  "symbol": "BTC-USD",
+  "signal_type": "BUY",
+  "votes": [
+    {
+      "agent_id": "quant-1",
+      "strategy": "momentum",
+      "stake": 12.0,
+      "vote": "BUY",
+      "confidence": 0.777,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-2",
+      "strategy": "mean_revert",
+      "stake": 10.0,
+      "vote": "SELL",
+      "confidence": 0.69,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-3",
+      "strategy": "arb",
+      "stake": 11.0,
+      "vote": "BUY",
+      "confidence": 0.676,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-4",
+      "strategy": "trend",
+      "stake": 9.0,
+      "vote": "BUY",
+      "confidence": 0.771,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-5",
+      "strategy": "contrarian",
+      "stake": 8.0,
+      "vote": "SELL",
+      "confidence": 0.625,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-6",
+      "strategy": "hybrid",
+      "stake": 10.0,
+      "vote": "BUY",
+      "confidence": 0.527,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-7",
+      "strategy": "momentum",
+      "stake": 11.0,
+      "vote": "BUY",
+      "confidence": 0.743,
+      "agrees": true
+    },
+    {
+      "agent_id": "quant-8",
+      "strategy": "trend",
+      "stake": 9.5,
+      "vote": "SELL",
+      "confidence": 0.568,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-9",
+      "strategy": "mean_revert",
+      "stake": 8.5,
+      "vote": "SELL",
+      "confidence": 0.672,
+      "agrees": false
+    },
+    {
+      "agent_id": "quant-10",
+      "strategy": "contrarian",
+      "stake": 10.0,
+      "vote": "SELL",
+      "confidence": 0.638,
+      "agrees": false
+    }
+  ],
+  "vote_summary": {
+    "BUY": 5,
+    "SELL": 5
+  },
+  "agree_count": 5,
+  "total_agents": 10,
+  "weighted_agree_fraction": 0.5354,
+  "consensus_threshold": 0.6666666666666666,
+  "consensus_reached": false,
+  "consensus_action": "HOLD",
+  "total_stake": 99.0,
+  "voted_at": 1772175292.6380749,
+  "version": "S46"
+}
