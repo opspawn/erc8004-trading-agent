@@ -403,7 +403,7 @@ class TestGetS46PortfolioRisk:
 
     def test_version_s46(self):
         r = get_s46_portfolio_risk()
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_generated_at_recent(self):
         r = get_s46_portfolio_risk()
@@ -472,7 +472,7 @@ class TestGetS46PositionSize:
 
     def test_version_s46(self):
         r = get_s46_position_size()
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_invalid_symbol_raises(self):
         with pytest.raises(ValueError, match="Unknown symbol"):
@@ -588,7 +588,7 @@ class TestGetS46Exposure:
 
     def test_version_s46(self):
         r = get_s46_exposure()
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_deterministic(self):
         r1 = get_s46_exposure()
@@ -744,7 +744,7 @@ class TestGetS46SwarmVote:
 
     def test_version_s46(self):
         r = get_s46_swarm_vote("BTC-USD", "BUY")
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_voted_at_recent(self):
         r = get_s46_swarm_vote("BTC-USD", "BUY")
@@ -810,7 +810,7 @@ class TestGetS46SwarmPerformance:
 
     def test_version_s46(self):
         r = get_s46_swarm_performance()
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_generated_at_recent(self):
         r = get_s46_swarm_performance()
@@ -867,11 +867,11 @@ class TestS46HTTPEndpoints:
 
     def test_health_has_version_s46(self, server):
         r = _get(f"{self.BASE}/health")
-        assert r.get("version") == "S46"
+        assert r.get("version") in ("S46", "S47", "S48")
 
     def test_health_has_sprint_s46(self, server):
         r = _get(f"{self.BASE}/health")
-        assert r.get("sprint") == "S46"
+        assert r.get("sprint") in ("S46", "S47", "S48")
 
     def test_health_has_highlights(self, server):
         r = _get(f"{self.BASE}/health")

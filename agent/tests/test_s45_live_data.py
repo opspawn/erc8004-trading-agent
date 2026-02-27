@@ -895,7 +895,7 @@ class TestS45HttpEndpoints:
 
     def test_health_version_s45(self, server):
         r = _get(server, "/health")
-        assert r["version"] in ("S45", "S46")
+        assert r["version"] in ("S45", "S46", "S47", "S48")
 
     def test_health_test_count_gte_5746(self, server):
         r = _get(server, "/health")

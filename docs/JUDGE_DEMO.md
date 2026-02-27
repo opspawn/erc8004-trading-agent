@@ -10,7 +10,7 @@
 Verify the server is live and see the current test count.
 
 ```bash
-curl https://api.opspawn.com/erc8004/demo/health
+curl http://localhost:8084/demo/health | python3 -m json.tool
 ```
 
 **Expected response:**
@@ -18,29 +18,31 @@ curl https://api.opspawn.com/erc8004/demo/health
 {
   "status": "ok",
   "service": "ERC-8004 Demo Server",
-  "version": "S40",
-  "tests": 4968,
+  "version": "S47",
+  "sprint": "S47",
+  "tests": 6121,
   "uptime_s": 12345.6,
   "dev_mode": true
 }
 ```
 
-Key fields: `status: "ok"`, `tests: 4968`, `version: "S40"`.
+Key fields: `status: "ok"`, `tests: 6121`, `version: "S47"`.
 
-**Or run locally:**
+**Or run with public URL:**
 ```bash
-cd agent && python3 demo_server.py &
-curl http://localhost:8084/health
+curl https://api.opspawn.com/erc8004/demo/health | python3 -m json.tool
 ```
 
 ---
 
-## Step 2 — Run the Multi-Agent Demo Pipeline (2 minutes)
+## Step 2 — 10-Agent Swarm Vote (1 minute)
 
-This is the core demo. Three agents with ERC-8004 identities vote on each trade tick using reputation-weighted consensus. The pipeline runs end-to-end in under 1 second.
+The 10-agent swarm uses stake-weighted consensus to vote on a trade signal.
 
 ```bash
-curl -s -X POST 'https://api.opspawn.com/erc8004/demo/run?ticks=10' \
+curl -s -X POST 'http://localhost:8084/api/v1/swarm/vote' \
+  -H 'Content-Type: application/json' \
+  -d '{"signal":"LONG","asset":"BTC-USD"}' \
   | python3 -m json.tool
 ```
 
@@ -48,113 +50,108 @@ curl -s -X POST 'https://api.opspawn.com/erc8004/demo/run?ticks=10' \
 
 ```json
 {
-  "demo": {
-    "ticks_run": 10,
-    "trades_executed": 7,
-    "avg_reputation_score": 7.24,   ← reputation-weighted consensus score
-    "consensus_rate": 0.85           ← fraction of ticks reaching 2/3 agreement
-  },
-  "agents": [
-    {
-      "agent_id": "agent-conservative-001",
-      "strategy": "conservative",
-      "pnl_usd": 12.4,
-      "reputation_delta": 0.1,       ← on-chain reputation updated after run
-      "win_rate": 0.75,
-      "erc8004_token_id": 1          ← on-chain identity token
-    }
-  ],
-  "validation_artifact": {
-    "artifact_hash": "0xabc123...",  ← signed proof of session performance
-    "win_rate": 0.72,
-    "signed_at": 1740614400
-  },
-  "x402": {
-    "dev_mode": true,                ← payment gate bypassed for judges
-    "price_usdc": "1000"             ← $0.001 USDC per call in production
-  }
+  "symbol": "BTC-USD",
+  "signal_type": "BUY",
+  "votes": [...],
+  "vote_summary": {"BUY": 7, "SELL": 3},
+  "weighted_agree_fraction": 0.72,
+  "consensus_threshold": 0.667,
+  "consensus_reached": true,
+  "consensus_action": "BUY",
+  "version": "S46"
 }
 ```
 
-**The ERC-8004 story in the response:**
-- Each agent has an `erc8004_token_id` — their permanent on-chain identity
-- `reputation_delta` shows their score updating after each trade
-- `validation_artifact.artifact_hash` is the signed proof stored on-chain
+**The ERC-8004 story:**
+- 10 agents with diverse strategies (momentum, mean-revert, arb, trend, contrarian, hybrid)
+- Stake-weighted: high-reputation agents carry more weight
+- 2/3 supermajority required for consensus
 
 ---
 
-## Step 3 — Portfolio Snapshot (1 minute)
+## Step 3 — Full Pipeline Showcase (1 minute)
 
-See the current portfolio state including risk metrics and Credora credit ratings.
+Single call runs the entire pipeline: price tick → swarm vote → VaR → paper trade.
 
 ```bash
-curl -s https://api.opspawn.com/erc8004/demo/portfolio/snapshot \
-  | python3 -m json.tool
+curl -s -X POST http://localhost:8084/api/v1/demo/showcase | python3 -m json.tool
 ```
 
 **What to look for:**
 ```json
 {
-  "agents": [
-    {
-      "agent_id": "agent-conservative-001",
-      "total_value_usd": 10847.20,
-      "pnl_usd": 847.20,
-      "credora_rating": "A+",        ← Credora credit score
-      "max_drawdown": -0.042,
-      "sharpe_ratio": 1.38
-    }
-  ],
-  "portfolio_metrics": {
-    "total_value_usd": 31200.50,
-    "aggregate_sharpe": 1.24,
-    "consensus_agreement_rate": 0.85
-  }
-}
-```
-
----
-
-## Step 4 — Strategy Comparison (1 minute)
-
-Compare the three strategies side-by-side across risk-adjusted metrics.
-
-```bash
-curl -s https://api.opspawn.com/erc8004/demo/strategy/compare \
-  | python3 -m json.tool
-```
-
-**What to look for:**
-```json
-{
-  "strategies": [
-    {"name": "conservative", "sharpe": 1.38, "sortino": 1.72, "win_rate": 0.75, "rank": 1},
-    {"name": "balanced",     "sharpe": 1.21, "sortino": 1.48, "win_rate": 0.67, "rank": 2},
-    {"name": "aggressive",   "sharpe": 0.94, "sortino": 1.21, "win_rate": 0.61, "rank": 3}
+  "showcase": "ERC-8004 Full Pipeline",
+  "version": "S47",
+  "total_duration_ms": 12.4,
+  "steps": [
+    {"step": 1, "label": "Live Price Tick — BTC-USD", ...},
+    {"step": 2, "label": "10-Agent Swarm Vote — LONG BTC-USD", ...},
+    {"step": 3, "label": "Risk Engine — VaR 95/99% + Kelly Position Size", ...},
+    {"step": 4, "label": "Paper Trade Execution — Consensus Decision", ...}
   ],
   "summary": {
-    "best_sharpe": "conservative",
-    "best_win_rate": "conservative",
-    "recommended": "conservative"
+    "btc_price": 68247.50,
+    "swarm_consensus": "BUY",
+    "consensus_agents": "7/10",
+    "var_95": 0.012,
+    "position_usd": 2000.0,
+    "trade_executed": "s47-showcase-..."
   }
 }
 ```
 
 ---
 
-## Step 5 — Verify the On-Chain Contract (2 minutes)
+## Step 4 — Risk Portfolio (1 minute)
 
-The ERC-8004 contracts are deployed on Base Sepolia.
+See the portfolio-level risk metrics: VaR, Sharpe/Sortino/Calmar, correlation.
 
 ```bash
-# View contract addresses
-cat contracts/deployment.json
+curl -s http://localhost:8084/api/v1/risk/portfolio | python3 -m json.tool
 ```
 
-Navigate to [sepolia.basescan.org](https://sepolia.basescan.org) and search for the `IdentityRegistry` address. You'll see:
-- ERC-721 token mints for each agent identity
-- Reputation update transactions
-- Validation proof records
+**What to look for:**
+```json
+{
+  "portfolio": {
+    "var_95": 0.012,
+    "var_99": 0.021,
+    "sharpe_ratio": 1.42,
+    "sortino_ratio": 2.14,
+    "calmar_ratio": 3.5,
+    "max_drawdown": 0.08
+  },
+  "correlation_matrix": { ... },
+  "per_symbol": { ... },
+  "version": "S46"
+}
+```
+
+---
+
+## Step 5 — Performance Summary (NEW in S48, 30 seconds)
+
+Aggregate paper trading performance metrics across all sessions.
+
+```bash
+curl -s http://localhost:8084/api/v1/performance/summary | python3 -m json.tool
+```
+
+**What to look for:**
+```json
+{
+  "total_paper_trades": 12,
+  "total_pnl": 847.20,
+  "win_rate": 66.7,
+  "avg_trade_pnl": 70.6,
+  "best_trade": 312.50,
+  "worst_trade": -95.20,
+  "sharpe_ratio": 1.38,
+  "drawdown_pct": 4.2,
+  "active_agents": 10,
+  "version": "S48"
+}
+```
 
 ---
 
@@ -164,94 +161,12 @@ Navigate to [sepolia.basescan.org](https://sepolia.basescan.org) and search for 
 cd agent
 pip install -r requirements.txt
 python3 -m pytest tests/ -q --tb=no
-# Expected: 4968 passed (or close — 1 flaky test in test_signal_server.py)
+# Expected: 6121 passed
 ```
 
-To run just the S40 tests:
+To run just the S48 tests:
 ```bash
-python3 -m pytest tests/test_s40_health_judge.py -v
-```
-
----
-
-## Bonus: Agent Leaderboard
-
-```bash
-# Top agents by Sharpe ratio
-curl 'https://api.opspawn.com/erc8004/demo/leaderboard?sort_by=sharpe&limit=5' \
-  | python3 -m json.tool
-
-# Top agents by PnL
-curl 'https://api.opspawn.com/erc8004/demo/leaderboard?sort_by=pnl&limit=5' \
-  | python3 -m json.tool
-```
-
----
-
-## S46: Portfolio Risk Management + 10-Agent Swarm
-
-### Risk Management Endpoints (NEW in S46)
-
-```bash
-# Portfolio-level VaR, Sharpe/Sortino/Calmar, correlation matrix
-curl https://api.opspawn.com/erc8004/api/v1/risk/portfolio | python3 -m json.tool
-
-# Position sizing: volatility-based, Half-Kelly, or fixed-fraction
-curl -s -X POST https://api.opspawn.com/erc8004/api/v1/risk/position-size \
-  -H 'Content-Type: application/json' \
-  -d '{"symbol":"BTC-USD","capital":100000,"risk_budget_pct":0.02,"method":"half_kelly"}' \
-  | python3 -m json.tool
-
-# Per-symbol exposure + Herfindahl concentration index
-curl https://api.opspawn.com/erc8004/api/v1/risk/exposure | python3 -m json.tool
-```
-
-**What to look for in `/api/v1/risk/portfolio`:**
-```json
-{
-  "portfolio": {
-    "var_95": 0.012,          ← daily 95% Value at Risk
-    "var_99": 0.021,          ← daily 99% VaR
-    "sharpe_ratio": 1.42,
-    "sortino_ratio": 2.14,
-    "calmar_ratio": 3.5,
-    "max_drawdown": 0.08
-  },
-  "correlation_matrix": { ... },  ← 4×4 cross-symbol correlation
-  "per_symbol": { ... },
-  "version": "S46"
-}
-```
-
-### Multi-Agent Swarm Endpoints (NEW in S46)
-
-The system now runs **10 agents** (quant-1 through quant-10) with diverse strategies:
-momentum, mean-revert, arb, trend, contrarian, and hybrid.
-
-```bash
-# All 10 agents vote on a BUY signal — stake-weighted 2/3 supermajority
-curl -s -X POST https://api.opspawn.com/erc8004/api/v1/swarm/vote \
-  -H 'Content-Type: application/json' \
-  -d '{"symbol":"BTC-USD","signal_type":"BUY"}' \
-  | python3 -m json.tool
-
-# 24h PnL + Sharpe leaderboard for all 10 agents
-curl https://api.opspawn.com/erc8004/api/v1/swarm/performance | python3 -m json.tool
-```
-
-**What to look for in `/api/v1/swarm/vote`:**
-```json
-{
-  "symbol": "BTC-USD",
-  "signal_type": "BUY",
-  "votes": [...],              ← 10 individual votes with confidence
-  "vote_summary": {"BUY":7,"SELL":3},
-  "weighted_agree_fraction": 0.72,
-  "consensus_threshold": 0.667,
-  "consensus_reached": true,
-  "consensus_action": "BUY",
-  "version": "S46"
-}
+python3 -m pytest tests/test_s48_performance.py -v
 ```
 
 ---
@@ -264,10 +179,11 @@ Most hackathon trading agent demos are just Python scripts with a `print()` stat
 1. **Real on-chain identity** — each agent is an ERC-721 token with verifiable history
 2. **Reputation as stake** — agents lose reputation for bad trades; bad agents get outvoted
 3. **Payment gating** — the API costs real (micro) money in production; AI agents pay autonomously via x402
-4. **6,085 tests** — not a toy; production-quality code
+4. **6,121 tests** — not a toy; production-quality code
 5. **Credora integration** — on-chain credit ratings feed into risk limits
 6. **VaR risk engine** — 95%/99% historical-simulation VaR, Sharpe/Sortino/Calmar ratios
 7. **10-agent swarm** — diverse strategy ensemble with stake-weighted consensus voting
+8. **Performance dashboard** — win rate, Sharpe ratio, max drawdown across all sessions
 
 ---
 
