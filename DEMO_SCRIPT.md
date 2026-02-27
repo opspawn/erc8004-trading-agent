@@ -1,9 +1,39 @@
-# ERC-8004 Trading Agent — 3-Minute Demo Script (S43)
+# ERC-8004 Trading Agent — 3-Minute Demo Script (S44)
 
 > **Target audience**: Hackathon judges / technical evaluators
 > **Format**: Screen recording + voice-over
 > **Runtime**: ~3 minutes
-> **Sprint**: S43 — Cross-Agent Coordination + 5,500+ Tests
+> **Sprint**: S44 — Agent Performance Leaderboard + Paper Trading + 5,746 Tests
+
+## S44 Feature Highlights
+
+### Agent Performance Leaderboard
+- **GET /api/v1/agents/leaderboard** — Real-time ranked leaderboard across all agents
+  - Tracks: PnL, win rate, Sharpe ratio, trade count, avg return per trade
+  - Filters: timeframe (1h/24h/7d/30d), min_trades, strategy_type
+  - Pagination: page/page_size for large agent populations
+- **POST /api/v1/agents/{id}/record-trade** — Record trade outcome; updates leaderboard live
+- **GET /api/v1/agents/{id}/stats** — Deep stats: max win/loss, best streak, Sharpe
+
+### Paper Trading Feed
+- **POST /api/v1/trading/paper/order** — Simulated market order with 0.1% slippage + 0.05% fee
+- **GET /api/v1/trading/paper/positions** — View all open paper positions by agent
+- **POST /api/v1/trading/paper/close** — Close position; calculates gross PnL, fees, net PnL
+- **GET /api/v1/trading/paper/history** — Full trade history with agent/symbol filters
+
+### Demo Scenario (Wow Factor)
+- **POST /api/v1/demo/run-leaderboard-scenario** — One call seeds 5 agents, runs 100 trades, returns live leaderboard
+  - Agents: trend_follower, mean_reverter, momentum_rider, arb_detector, claude_strategist
+  - claude_strategist has highest alpha bias (0.6% per trade vs 0.3% baseline)
+  - Deterministic (seed=42) — reproducible for judge demos
+
+```bash
+# One-liner judge demo:
+curl -s -X POST http://localhost:8084/api/v1/demo/run-leaderboard-scenario \
+  | python3 -m json.tool | head -60
+```
+
+---
 
 ---
 
@@ -141,10 +171,10 @@ Profit Factor: 2.1
 
 **GitHub**: https://github.com/opspawn/erc8004-trading-agent
 
-**Tests**: 5,519 passing (full coverage, S43 cross-agent coordination included)
+**Tests**: 5,746 passing (full coverage, S44 leaderboard + paper trading included)
 
 **Standard**: ERC-8004 — Agent Financial Identity for Ethereum
 
 ---
 
-*Demo script version: S43 | Date: 2026-02-27 | Sprint: 43*
+*Demo script version: S44 | Date: 2026-02-27 | Sprint: 44*

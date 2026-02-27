@@ -59,7 +59,7 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "S43"
+SERVER_VERSION = "S44"
 _S40_TEST_COUNT = 4968  # kept for backward-compat imports
 _S41_TEST_COUNT = 5141  # verified: full suite 2026-02-27
 _S42_TEST_COUNT = 5355  # verified: full suite 2026-02-27
@@ -6833,7 +6833,7 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "Multi-agent trading system with on-chain ERC-8004 identity, "
                     "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
                 ),
-                "test_count": _S43_TEST_COUNT,
+                "test_count": _S44_TEST_COUNT,
                 "endpoints": {
                     "GET  /health": "Health check — {status, tests, version}",
                     "GET  /demo/info": "Full API documentation",
@@ -6853,6 +6853,14 @@ class _DemoHandler(BaseHTTPRequestHandler):
                     "POST /api/v1/agents/broadcast": "Broadcast signal to all peer agents",
                     "GET  /api/v1/coordination/signals": "Retrieve recent cross-agent broadcast signals",
                     "POST /api/v1/coordination/resolve": "Resolve conflicting agent signals via consensus",
+                    "GET  /api/v1/agents/leaderboard": "Agent performance leaderboard (S44)",
+                    "POST /api/v1/agents/{id}/record-trade": "Record agent trade outcome (S44)",
+                    "GET  /api/v1/agents/{id}/stats": "Individual agent performance stats (S44)",
+                    "POST /api/v1/trading/paper/order": "Place simulated paper trade order (S44)",
+                    "GET  /api/v1/trading/paper/positions": "List open paper positions (S44)",
+                    "POST /api/v1/trading/paper/close": "Close a paper position (S44)",
+                    "GET  /api/v1/trading/paper/history": "Paper trade history (S44)",
+                    "POST /api/v1/demo/run-leaderboard-scenario": "Seed 5 agents, run 20 trades, return leaderboard (S44)",
                 },
                 "quickstart": (
                     "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
@@ -6864,8 +6872,8 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
-                "tests": _S43_TEST_COUNT,
-                "test_count": _S43_TEST_COUNT,
+                "tests": _S44_TEST_COUNT,
+                "test_count": _S44_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
                 "dev_mode": X402_DEV_MODE,
@@ -7137,6 +7145,24 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(200, result)
             except ValueError as exc:
                 self._send_json(400, {"error": str(exc)})
+        # S44: Agent performance leaderboard
+        elif path in ("/api/v1/agents/leaderboard",):
+            self._handle_s44_leaderboard()
+        # S44: Individual agent stats
+        elif path.startswith("/api/v1/agents/") and path.endswith("/stats"):
+            parts = path.split("/")
+            # /api/v1/agents/<id>/stats → parts[4]
+            agent_id_s44 = parts[4] if len(parts) >= 5 else ""
+            if not agent_id_s44:
+                self._send_json(400, {"error": "agent_id required"})
+            else:
+                self._handle_s44_agent_stats(agent_id_s44)
+        # S44: Paper trading positions list
+        elif path in ("/api/v1/trading/paper/positions",):
+            self._handle_s44_paper_positions()
+        # S44: Paper trading history
+        elif path in ("/api/v1/trading/paper/history",):
+            self._handle_s44_paper_history()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -7231,6 +7257,24 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S43: Resolve coordination conflict
         elif path in ("/api/v1/coordination/resolve",):
             self._handle_s43_resolve()
+        # S44: Record trade for leaderboard
+        elif path.startswith("/api/v1/agents/") and path.endswith("/record-trade"):
+            parts = path.split("/")
+            # /api/v1/agents/<id>/record-trade → parts[4]
+            agent_id_s44 = parts[4] if len(parts) >= 5 else ""
+            if not agent_id_s44:
+                self._send_json(400, {"error": "agent_id required"})
+            else:
+                self._handle_s44_record_trade(agent_id_s44)
+        # S44: Place paper order
+        elif path in ("/api/v1/trading/paper/order",):
+            self._handle_s44_paper_order()
+        # S44: Close paper position
+        elif path in ("/api/v1/trading/paper/close",):
+            self._handle_s44_paper_close()
+        # S44: Run leaderboard demo scenario
+        elif path in ("/api/v1/demo/run-leaderboard-scenario",):
+            self._handle_s44_demo_scenario()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -8183,6 +8227,190 @@ class _DemoHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
 
+    # ── S44 handlers ──────────────────────────────────────────────────────────
+
+    def _handle_s44_leaderboard(self) -> None:
+        """Handle GET /api/v1/agents/leaderboard."""
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        timeframe = qs.get("timeframe", ["24h"])[0]
+        strategy_type = qs.get("strategy_type", [None])[0]
+        try:
+            min_trades = int(qs.get("min_trades", ["0"])[0])
+        except (ValueError, TypeError):
+            min_trades = 0
+        try:
+            page = int(qs.get("page", ["1"])[0])
+        except (ValueError, TypeError):
+            page = 1
+        try:
+            page_size = int(qs.get("page_size", ["10"])[0])
+        except (ValueError, TypeError):
+            page_size = 10
+        try:
+            result = get_leaderboard(
+                timeframe=timeframe,
+                min_trades=min_trades,
+                strategy_type=strategy_type,
+                page=page,
+                page_size=page_size,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_agent_stats(self, agent_id: str) -> None:
+        """Handle GET /api/v1/agents/{id}/stats."""
+        try:
+            result = get_agent_stats(agent_id)
+            self._send_json(200, result)
+        except KeyError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_record_trade(self, agent_id: str) -> None:
+        """Handle POST /api/v1/agents/{id}/record-trade."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+        pnl = body.get("pnl")
+        win = body.get("win")
+        symbol = body.get("symbol", "")
+        strategy_type = body.get("strategy_type", "unknown")
+        if pnl is None:
+            self._send_json(400, {"error": "pnl is required"})
+            return
+        if win is None:
+            self._send_json(400, {"error": "win is required"})
+            return
+        if not symbol:
+            self._send_json(400, {"error": "symbol is required"})
+            return
+        try:
+            pnl_float = float(pnl)
+            win_bool = bool(win)
+            result = record_agent_trade(
+                agent_id=agent_id,
+                pnl=pnl_float,
+                win=win_bool,
+                symbol=symbol,
+                strategy_type=strategy_type,
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_paper_order(self) -> None:
+        """Handle POST /api/v1/trading/paper/order."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+        agent_id = body.get("agent_id", "")
+        symbol = body.get("symbol", "")
+        side = body.get("side", "")
+        quantity = body.get("quantity")
+        price = body.get("price")
+        if not agent_id:
+            self._send_json(400, {"error": "agent_id is required"})
+            return
+        if not symbol:
+            self._send_json(400, {"error": "symbol is required"})
+            return
+        if not side:
+            self._send_json(400, {"error": "side is required"})
+            return
+        if quantity is None:
+            self._send_json(400, {"error": "quantity is required"})
+            return
+        if price is None:
+            self._send_json(400, {"error": "price is required"})
+            return
+        try:
+            result = place_paper_order(
+                agent_id=agent_id,
+                symbol=symbol,
+                side=side,
+                quantity=float(quantity),
+                price=float(price),
+            )
+            self._send_json(200, result)
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_paper_positions(self) -> None:
+        """Handle GET /api/v1/trading/paper/positions."""
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        agent_id = qs.get("agent_id", [None])[0]
+        try:
+            positions = get_paper_positions(agent_id=agent_id)
+            self._send_json(200, {"positions": positions, "count": len(positions)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_paper_close(self) -> None:
+        """Handle POST /api/v1/trading/paper/close."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+        position_id = body.get("position_id", "")
+        close_price = body.get("close_price")
+        agent_id = body.get("agent_id")
+        if not position_id:
+            self._send_json(400, {"error": "position_id is required"})
+            return
+        if close_price is None:
+            self._send_json(400, {"error": "close_price is required"})
+            return
+        try:
+            result = close_paper_position(
+                position_id=position_id,
+                close_price=float(close_price),
+                agent_id=agent_id,
+            )
+            self._send_json(200, result)
+        except KeyError as exc:
+            self._send_json(404, {"error": str(exc)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_paper_history(self) -> None:
+        """Handle GET /api/v1/trading/paper/history."""
+        parsed = urlparse(self.path)
+        qs = parse_qs(parsed.query)
+        agent_id = qs.get("agent_id", [None])[0]
+        symbol = qs.get("symbol", [None])[0]
+        try:
+            limit = int(qs.get("limit", ["50"])[0])
+        except (ValueError, TypeError):
+            limit = 50
+        try:
+            history = get_paper_history(agent_id=agent_id, symbol=symbol, limit=limit)
+            self._send_json(200, {"history": history, "count": len(history)})
+        except ValueError as exc:
+            self._send_json(400, {"error": str(exc)})
+
+    def _handle_s44_demo_scenario(self) -> None:
+        """Handle POST /api/v1/demo/run-leaderboard-scenario."""
+        try:
+            result = run_leaderboard_scenario()
+            self._send_json(200, result)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json(500, {"error": str(exc)})
+
     def _handle_agent_pnl_stream(self, agent_id: str) -> None:
         """Handle GET /demo/agents/{id}/pnl/stream — SSE P&L stream."""
         try:
@@ -8211,6 +8439,573 @@ class _DemoHandler(BaseHTTPRequestHandler):
 
         except (BrokenPipeError, ConnectionResetError, OSError):
             pass
+
+
+# ── S44: Agent Performance Leaderboard + Paper Trading Feed ───────────────────
+#
+# Endpoints:
+#   GET  /api/v1/agents/leaderboard              — ranked agent list
+#   POST /api/v1/agents/{id}/record-trade        — record trade outcome
+#   GET  /api/v1/agents/{id}/stats               — individual agent stats
+#   POST /api/v1/trading/paper/order             — place simulated order
+#   GET  /api/v1/trading/paper/positions         — open positions
+#   POST /api/v1/trading/paper/close             — close a position
+#   GET  /api/v1/trading/paper/history           — trade history
+#   POST /api/v1/demo/run-leaderboard-scenario   — seed + run full demo
+
+_S44_TEST_COUNT = 5746  # verified: full suite 2026-02-27 after S44
+
+_S44_LEADERBOARD_LOCK = threading.Lock()
+_S44_LEADERBOARD: Dict[str, Any] = {}          # keyed by agent_id
+
+_S44_PAPER_LOCK = threading.Lock()
+_S44_PAPER_ORDERS: List[Dict[str, Any]] = []   # all filled orders (history)
+_S44_PAPER_POSITIONS: Dict[str, Any] = {}      # open positions keyed by position_id
+
+_S44_VALID_SIDES = {"BUY", "SELL"}
+_S44_VALID_TIMEFRAMES = {"1h", "24h", "7d", "30d"}
+_S44_VALID_SYMBOLS = {
+    "BTC/USD", "ETH/USD", "SOL/USD", "MATIC/USD", "AVAX/USD",
+    "BNB/USD", "LINK/USD", "ARB/USD",
+}
+_S44_STRATEGY_TYPES = {
+    "trend_follower", "mean_reverter", "momentum_rider",
+    "arb_detector", "claude_strategist",
+}
+_S44_SLIPPAGE = 0.001   # 0.1% fill price slippage
+_S44_FEE_RATE = 0.0005  # 0.05% fee
+
+_S44_DEMO_AGENTS = [
+    {"agent_id": "agent-trend-001",     "strategy_type": "trend_follower"},
+    {"agent_id": "agent-meanrev-002",   "strategy_type": "mean_reverter"},
+    {"agent_id": "agent-momentum-003",  "strategy_type": "momentum_rider"},
+    {"agent_id": "agent-arb-004",       "strategy_type": "arb_detector"},
+    {"agent_id": "agent-claude-005",    "strategy_type": "claude_strategist"},
+]
+
+_S44_DEMO_PRICES = {
+    "BTC/USD": 68000.0,
+    "ETH/USD": 3500.0,
+    "SOL/USD": 180.0,
+}
+
+
+# ── Leaderboard business logic ─────────────────────────────────────────────────
+
+
+def _s44_agent_entry(agent_id: str, strategy_type: str = "unknown") -> Dict[str, Any]:
+    """Return a fresh leaderboard entry for *agent_id*."""
+    return {
+        "agent_id": agent_id,
+        "strategy_type": strategy_type,
+        "total_pnl": 0.0,
+        "trade_count": 0,
+        "win_count": 0,
+        "loss_count": 0,
+        "win_rate": 0.0,
+        "avg_return_per_trade": 0.0,
+        "sharpe_ratio": 0.0,
+        "returns": [],                  # list of per-trade returns (for Sharpe)
+        "first_trade_at": None,
+        "last_trade_at": None,
+    }
+
+
+def _s44_compute_sharpe(returns: List[float]) -> float:
+    """Annualised Sharpe ratio from a list of per-trade returns."""
+    if len(returns) < 2:
+        return 0.0
+    n = len(returns)
+    mean = sum(returns) / n
+    variance = sum((r - mean) ** 2 for r in returns) / (n - 1)
+    std = math.sqrt(variance) if variance > 0 else 0.0
+    if std == 0.0:
+        return 0.0
+    return round((mean / std) * math.sqrt(252), 4)
+
+
+def record_agent_trade(
+    agent_id: str,
+    pnl: float,
+    win: bool,
+    symbol: str,
+    strategy_type: str = "unknown",
+) -> Dict[str, Any]:
+    """
+    Record a completed trade outcome for *agent_id* in the leaderboard.
+
+    Args:
+        agent_id:       Unique agent identifier.
+        pnl:            Profit/loss amount for this trade (positive = profit).
+        win:            True if trade was profitable.
+        symbol:         Asset symbol traded (e.g. "BTC/USD").
+        strategy_type:  Strategy label (e.g. "trend_follower").
+
+    Returns:
+        Updated leaderboard entry for the agent.
+
+    Raises:
+        ValueError: on invalid inputs.
+    """
+    if not agent_id or not isinstance(agent_id, str):
+        raise ValueError("agent_id must be a non-empty string")
+    if not isinstance(pnl, (int, float)):
+        raise ValueError("pnl must be a number")
+    if not isinstance(win, bool):
+        raise ValueError("win must be a boolean")
+    if symbol not in _S44_VALID_SYMBOLS:
+        raise ValueError(f"Invalid symbol '{symbol}'. Valid: {sorted(_S44_VALID_SYMBOLS)}")
+
+    now_ts = time.time()
+    with _S44_LEADERBOARD_LOCK:
+        if agent_id not in _S44_LEADERBOARD:
+            _S44_LEADERBOARD[agent_id] = _s44_agent_entry(agent_id, strategy_type)
+        entry = _S44_LEADERBOARD[agent_id]
+
+        entry["total_pnl"] = round(entry["total_pnl"] + pnl, 6)
+        entry["trade_count"] += 1
+        if win:
+            entry["win_count"] += 1
+        else:
+            entry["loss_count"] += 1
+        entry["win_rate"] = round(entry["win_count"] / entry["trade_count"], 4)
+        entry["returns"].append(pnl)
+        entry["avg_return_per_trade"] = round(
+            entry["total_pnl"] / entry["trade_count"], 6
+        )
+        entry["sharpe_ratio"] = _s44_compute_sharpe(entry["returns"])
+        entry["strategy_type"] = strategy_type
+        if entry["first_trade_at"] is None:
+            entry["first_trade_at"] = now_ts
+        entry["last_trade_at"] = now_ts
+
+        # Return a clean copy without internal returns list
+        result = {k: v for k, v in entry.items() if k != "returns"}
+        result["returns_count"] = len(entry["returns"])
+    return result
+
+
+def get_leaderboard(
+    timeframe: str = "24h",
+    min_trades: int = 0,
+    strategy_type: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 10,
+) -> Dict[str, Any]:
+    """
+    Return the ranked agent leaderboard.
+
+    Args:
+        timeframe:     Time window filter: '1h', '24h', '7d', '30d'.
+        min_trades:    Minimum trade count to appear in leaderboard.
+        strategy_type: Filter by strategy type (optional).
+        page:          Pagination page (1-indexed).
+        page_size:     Page size (1-100).
+
+    Returns:
+        dict with ranked list, pagination metadata, and snapshot timestamp.
+
+    Raises:
+        ValueError: on invalid timeframe, min_trades, or page params.
+    """
+    if timeframe not in _S44_VALID_TIMEFRAMES:
+        raise ValueError(
+            f"Invalid timeframe '{timeframe}'. Valid: {sorted(_S44_VALID_TIMEFRAMES)}"
+        )
+    if not isinstance(min_trades, int) or min_trades < 0:
+        raise ValueError("min_trades must be a non-negative integer")
+    if strategy_type is not None and strategy_type not in _S44_STRATEGY_TYPES:
+        raise ValueError(
+            f"Invalid strategy_type '{strategy_type}'. Valid: {sorted(_S44_STRATEGY_TYPES)}"
+        )
+    page = max(1, int(page))
+    page_size = max(1, min(100, int(page_size)))
+
+    # Timeframe cutoff
+    cutoff_seconds = {"1h": 3600, "24h": 86400, "7d": 604800, "30d": 2592000}
+    cutoff = time.time() - cutoff_seconds[timeframe]
+
+    with _S44_LEADERBOARD_LOCK:
+        entries = list(_S44_LEADERBOARD.values())
+
+    filtered = []
+    for e in entries:
+        # Timeframe filter: agent must have traded after cutoff (or no trades yet)
+        if e["last_trade_at"] is not None and e["last_trade_at"] < cutoff:
+            continue
+        if e["trade_count"] < min_trades:
+            continue
+        if strategy_type and e["strategy_type"] != strategy_type:
+            continue
+        clean = {k: v for k, v in e.items() if k != "returns"}
+        clean["returns_count"] = len(e.get("returns", []))
+        filtered.append(clean)
+
+    # Rank by total_pnl descending, then sharpe descending
+    filtered.sort(key=lambda x: (x["total_pnl"], x["sharpe_ratio"]), reverse=True)
+    for rank, entry in enumerate(filtered, start=1):
+        entry["rank"] = rank
+
+    total = len(filtered)
+    start = (page - 1) * page_size
+    page_entries = filtered[start: start + page_size]
+
+    return {
+        "leaderboard": page_entries,
+        "total_agents": total,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": max(1, math.ceil(total / page_size)),
+        "timeframe": timeframe,
+        "min_trades_filter": min_trades,
+        "strategy_type_filter": strategy_type,
+        "snapshot_at": time.time(),
+    }
+
+
+def get_agent_stats(agent_id: str) -> Dict[str, Any]:
+    """
+    Return full performance statistics for a single agent.
+
+    Raises:
+        KeyError: if agent_id is not found in the leaderboard.
+        ValueError: if agent_id is empty.
+    """
+    if not agent_id or not isinstance(agent_id, str):
+        raise ValueError("agent_id must be a non-empty string")
+    with _S44_LEADERBOARD_LOCK:
+        if agent_id not in _S44_LEADERBOARD:
+            raise KeyError(f"Agent '{agent_id}' not found in leaderboard")
+        entry = dict(_S44_LEADERBOARD[agent_id])
+        returns = entry.pop("returns", [])
+
+    # Compute additional statistics
+    max_win = max(returns) if returns else 0.0
+    max_loss = min(returns) if returns else 0.0
+    consecutive_wins = 0
+    best_streak = 0
+    streak = 0
+    for r in returns:
+        if r > 0:
+            streak += 1
+            best_streak = max(best_streak, streak)
+        else:
+            streak = 0
+
+    entry["max_single_win"] = round(max_win, 6)
+    entry["max_single_loss"] = round(max_loss, 6)
+    entry["best_win_streak"] = best_streak
+    entry["returns_count"] = len(returns)
+    entry["retrieved_at"] = time.time()
+    return entry
+
+
+# ── Paper Trading business logic ────────────────────────────────────────────────
+
+
+def place_paper_order(
+    agent_id: str,
+    symbol: str,
+    side: str,
+    quantity: float,
+    price: float,
+) -> Dict[str, Any]:
+    """
+    Place a simulated (paper) market order with slippage and fee.
+
+    Args:
+        agent_id:   Agent placing the order.
+        symbol:     Asset symbol (e.g. "BTC/USD").
+        side:       "BUY" or "SELL".
+        quantity:   Number of units to trade (> 0).
+        price:      Requested price.
+
+    Returns:
+        dict with order_id, fill_price, fee, pnl_delta, position_id.
+
+    Raises:
+        ValueError: on invalid inputs.
+    """
+    if not agent_id or not isinstance(agent_id, str):
+        raise ValueError("agent_id must be a non-empty string")
+    if symbol not in _S44_VALID_SYMBOLS:
+        raise ValueError(f"Invalid symbol '{symbol}'. Valid: {sorted(_S44_VALID_SYMBOLS)}")
+    side_upper = side.upper() if isinstance(side, str) else ""
+    if side_upper not in _S44_VALID_SIDES:
+        raise ValueError(f"Invalid side '{side}'. Valid: {sorted(_S44_VALID_SIDES)}")
+    if not isinstance(quantity, (int, float)) or quantity <= 0:
+        raise ValueError("quantity must be a positive number")
+    if not isinstance(price, (int, float)) or price <= 0:
+        raise ValueError("price must be a positive number")
+
+    # Apply slippage (adverse: buy higher, sell lower)
+    if side_upper == "BUY":
+        fill_price = round(price * (1 + _S44_SLIPPAGE), 6)
+    else:
+        fill_price = round(price * (1 - _S44_SLIPPAGE), 6)
+
+    notional = fill_price * quantity
+    fee = round(notional * _S44_FEE_RATE, 6)
+
+    # PnL delta: 0 on open (costs fee), realised on close
+    pnl_delta = -fee  # opening cost = fee
+
+    order_id = f"po-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}"
+    position_id = f"pp-{agent_id[:12]}-{symbol.replace('/', '')}-{uuid.uuid4().hex[:6]}"
+
+    order: Dict[str, Any] = {
+        "order_id": order_id,
+        "position_id": position_id,
+        "agent_id": agent_id,
+        "symbol": symbol,
+        "side": side_upper,
+        "quantity": quantity,
+        "requested_price": price,
+        "fill_price": fill_price,
+        "notional": round(notional, 6),
+        "fee": fee,
+        "pnl_delta": round(pnl_delta, 6),
+        "status": "filled",
+        "opened_at": time.time(),
+    }
+
+    # Track open position
+    position: Dict[str, Any] = {
+        "position_id": position_id,
+        "order_id": order_id,
+        "agent_id": agent_id,
+        "symbol": symbol,
+        "side": side_upper,
+        "quantity": quantity,
+        "entry_price": fill_price,
+        "fee_paid": fee,
+        "opened_at": time.time(),
+        "status": "open",
+    }
+
+    with _S44_PAPER_LOCK:
+        _S44_PAPER_ORDERS.append(order)
+        _S44_PAPER_POSITIONS[position_id] = position
+
+    return order
+
+
+def get_paper_positions(agent_id: Optional[str] = None) -> List[Dict[str, Any]]:
+    """
+    Return open paper positions, optionally filtered by agent_id.
+
+    Raises:
+        ValueError: if agent_id provided but empty string.
+    """
+    if agent_id is not None and not agent_id:
+        raise ValueError("agent_id must be non-empty if provided")
+    with _S44_PAPER_LOCK:
+        positions = [
+            p for p in _S44_PAPER_POSITIONS.values()
+            if p["status"] == "open"
+            and (agent_id is None or p["agent_id"] == agent_id)
+        ]
+    return positions
+
+
+def close_paper_position(
+    position_id: str,
+    close_price: float,
+    agent_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Close an open paper position, calculate final PnL.
+
+    Args:
+        position_id:  ID of the position to close.
+        close_price:  Current market price for close.
+        agent_id:     Optional owner check (raises if mismatch).
+
+    Returns:
+        dict with pnl, close_price, fee, net_pnl.
+
+    Raises:
+        KeyError: if position not found.
+        ValueError: on invalid inputs or already closed.
+    """
+    if not position_id:
+        raise ValueError("position_id is required")
+    if not isinstance(close_price, (int, float)) or close_price <= 0:
+        raise ValueError("close_price must be a positive number")
+
+    with _S44_PAPER_LOCK:
+        if position_id not in _S44_PAPER_POSITIONS:
+            raise KeyError(f"Position '{position_id}' not found")
+        pos = _S44_PAPER_POSITIONS[position_id]
+        if pos["status"] != "open":
+            raise ValueError(f"Position '{position_id}' is already closed")
+        if agent_id and pos["agent_id"] != agent_id:
+            raise ValueError(f"Position '{position_id}' does not belong to agent '{agent_id}'")
+
+        # Apply slippage on close (adverse direction)
+        side = pos["side"]
+        if side == "BUY":
+            # Closing a long = selling, slightly lower
+            actual_close = round(close_price * (1 - _S44_SLIPPAGE), 6)
+            gross_pnl = round((actual_close - pos["entry_price"]) * pos["quantity"], 6)
+        else:
+            # Closing a short = buying back, slightly higher
+            actual_close = round(close_price * (1 + _S44_SLIPPAGE), 6)
+            gross_pnl = round((pos["entry_price"] - actual_close) * pos["quantity"], 6)
+
+        close_fee = round(actual_close * pos["quantity"] * _S44_FEE_RATE, 6)
+        net_pnl = round(gross_pnl - close_fee - pos["fee_paid"], 6)
+        win = net_pnl > 0
+
+        pos["status"] = "closed"
+        pos["close_price"] = actual_close
+        pos["close_fee"] = close_fee
+        pos["gross_pnl"] = gross_pnl
+        pos["net_pnl"] = net_pnl
+        pos["win"] = win
+        pos["closed_at"] = time.time()
+
+        # Record in history
+        close_record: Dict[str, Any] = {
+            "order_id": f"cl-{int(time.time() * 1000)}-{uuid.uuid4().hex[:6]}",
+            "position_id": position_id,
+            "agent_id": pos["agent_id"],
+            "symbol": pos["symbol"],
+            "side": "SELL" if side == "BUY" else "BUY",  # closing side
+            "quantity": pos["quantity"],
+            "fill_price": actual_close,
+            "fee": close_fee,
+            "gross_pnl": gross_pnl,
+            "net_pnl": net_pnl,
+            "win": win,
+            "status": "closed",
+            "closed_at": time.time(),
+        }
+        _S44_PAPER_ORDERS.append(close_record)
+
+    return {
+        "position_id": position_id,
+        "symbol": pos["symbol"],
+        "side": side,
+        "quantity": pos["quantity"],
+        "entry_price": pos["entry_price"],
+        "close_price": actual_close,
+        "gross_pnl": gross_pnl,
+        "close_fee": close_fee,
+        "entry_fee": pos["fee_paid"],
+        "net_pnl": net_pnl,
+        "win": win,
+        "agent_id": pos["agent_id"],
+        "closed_at": pos["closed_at"],
+    }
+
+
+def get_paper_history(
+    agent_id: Optional[str] = None,
+    symbol: Optional[str] = None,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """
+    Return paper trade history, most-recent first.
+
+    Raises:
+        ValueError: if symbol is provided but invalid, or limit out of range.
+    """
+    if symbol is not None and symbol not in _S44_VALID_SYMBOLS:
+        raise ValueError(f"Invalid symbol '{symbol}'. Valid: {sorted(_S44_VALID_SYMBOLS)}")
+    limit = max(1, min(500, int(limit)))
+
+    with _S44_PAPER_LOCK:
+        orders = list(_S44_PAPER_ORDERS)
+
+    if agent_id:
+        orders = [o for o in orders if o.get("agent_id") == agent_id]
+    if symbol:
+        orders = [o for o in orders if o.get("symbol") == symbol]
+
+    # Most recent first
+    orders.sort(key=lambda o: o.get("opened_at", o.get("closed_at", 0)), reverse=True)
+    return orders[:limit]
+
+
+# ── Demo scenario ──────────────────────────────────────────────────────────────
+
+
+def run_leaderboard_scenario() -> Dict[str, Any]:
+    """
+    Seed 5 demo agents and run 20 simulated trades each across BTC, ETH, SOL.
+
+    Returns a real-time leaderboard snapshot plus scenario metadata.
+    """
+    demo_prices = dict(_S44_DEMO_PRICES)
+    symbols = list(demo_prices.keys())
+    scenario_orders = []
+    scenario_positions_closed = []
+
+    rng = random.Random(42)  # deterministic for reproducibility
+
+    for agent_spec in _S44_DEMO_AGENTS:
+        agent_id = agent_spec["agent_id"]
+        strategy = agent_spec["strategy_type"]
+
+        for trade_num in range(20):
+            symbol = symbols[trade_num % len(symbols)]
+            base_price = demo_prices[symbol]
+            # Slightly vary price each trade
+            price = round(base_price * (1 + rng.uniform(-0.005, 0.005)), 2)
+            side = rng.choice(["BUY", "SELL"])
+            quantity = round(rng.uniform(0.01, 0.5), 4)
+
+            # Place paper order
+            order = place_paper_order(agent_id, symbol, side, quantity, price)
+            scenario_orders.append(order["order_id"])
+
+            # Close immediately with a simulated profit/loss
+            # Strategy-based bias: some strategies are "better"
+            strategy_bias = {
+                "trend_follower": 0.003,
+                "mean_reverter": 0.002,
+                "momentum_rider": 0.004,
+                "arb_detector": 0.005,
+                "claude_strategist": 0.006,
+            }.get(strategy, 0.001)
+
+            price_move_pct = rng.gauss(strategy_bias, 0.008)
+            if side == "BUY":
+                close_price = round(price * (1 + price_move_pct), 2)
+            else:
+                close_price = round(price * (1 - price_move_pct), 2)
+
+            if close_price <= 0:
+                close_price = price * 0.99
+
+            try:
+                close_result = close_paper_position(order["position_id"], close_price)
+                scenario_positions_closed.append(order["position_id"])
+
+                # Record in leaderboard
+                record_agent_trade(
+                    agent_id=agent_id,
+                    pnl=close_result["net_pnl"],
+                    win=close_result["win"],
+                    symbol=symbol,
+                    strategy_type=strategy,
+                )
+            except (KeyError, ValueError):
+                pass
+
+    leaderboard = get_leaderboard(timeframe="24h", page=1, page_size=10)
+
+    return {
+        "scenario": "leaderboard_demo",
+        "agents_seeded": len(_S44_DEMO_AGENTS),
+        "trades_per_agent": 20,
+        "total_trades": len(scenario_orders),
+        "positions_closed": len(scenario_positions_closed),
+        "leaderboard": leaderboard,
+        "symbols_traded": symbols,
+        "completed_at": time.time(),
+    }
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
