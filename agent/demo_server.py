@@ -59,7 +59,8 @@ from trade_ledger import TradeLedger
 
 DEFAULT_PORT = 8084
 DEFAULT_TICKS = 10
-SERVER_VERSION = "1.0.0"
+SERVER_VERSION = "S40"
+_S40_TEST_COUNT = 4968
 
 # x402 payment config (dev_mode bypasses real payment)
 X402_DEV_MODE: bool = os.environ.get("DEV_MODE", "true").lower() != "false"
@@ -4162,7 +4163,7 @@ def get_demo_status() -> Dict[str, Any]:
             },
         },
         "run_count": run_count,
-        "test_count": 189,  # S32 final count
+        "test_count": _S40_TEST_COUNT,
         "generated_at": time.time(),
     }
 
@@ -5899,14 +5900,38 @@ class _DemoHandler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path.rstrip("/")
         qs = parse_qs(parsed.query)
-        if path in ("/demo/health", "/health"):
+        if path == "":
+            self._send_json(200, {
+                "service": "ERC-8004 Autonomous Trading Agent",
+                "version": SERVER_VERSION,
+                "description": (
+                    "Multi-agent trading system with on-chain ERC-8004 identity, "
+                    "reputation-weighted consensus, x402 payment gate, and Credora credit ratings."
+                ),
+                "test_count": _S40_TEST_COUNT,
+                "endpoints": {
+                    "GET  /health": "Health check — {status, tests, version}",
+                    "GET  /demo/info": "Full API documentation",
+                    "POST /demo/run": "Run 10-tick multi-agent demo pipeline",
+                    "GET  /demo/portfolio/snapshot": "Live portfolio snapshot",
+                    "GET  /demo/strategy/compare": "Strategy comparison dashboard",
+                    "GET  /demo/leaderboard": "Agent leaderboard by metric",
+                    "POST /demo/backtest": "Historical backtest (GBM)",
+                },
+                "quickstart": (
+                    "curl -s -X POST 'http://localhost:8084/demo/run?ticks=10' "
+                    "| python3 -m json.tool"
+                ),
+            })
+        elif path in ("/demo/health", "/health"):
             self._send_json(200, {
                 "status": "ok",
                 "service": "ERC-8004 Demo Server",
                 "version": SERVER_VERSION,
+                "tests": _S40_TEST_COUNT,
+                "test_count": _S40_TEST_COUNT,
                 "port": DEFAULT_PORT,
                 "uptime_s": round(time.time() - _SERVER_START_TIME, 1),
-                "test_count": 189,
                 "dev_mode": X402_DEV_MODE,
             })
         elif path in ("/demo/info", "/info"):
