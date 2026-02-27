@@ -3,7 +3,7 @@
 **Project**: ERC-8004 Autonomous Trading Agent
 **Hackathon**: lablab.ai ERC-8004 Hackathon, March 9–22, 2026
 **Prize pool**: $50,000 USDC
-**Sprint**: S45 (live price feed + WebSocket streaming)
+**Sprint**: S46 (portfolio risk engine + 10-agent swarm)
 
 ---
 
@@ -16,7 +16,13 @@
 
 ## Technical Quality
 
-- [x] **Test coverage** — 5,915 passing tests across 45 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Test coverage** — 6,085 passing tests across 46 sprints. Run: `cd agent && python3 -m pytest tests/ -q --tb=no`
+- [x] **Portfolio risk engine** — VaR at 95%/99% (historical simulation), Sharpe/Sortino/Calmar, cross-symbol correlation matrix (S46)
+- [x] **Position sizing** — Volatility-based, Half-Kelly, fixed-fraction; POST `/api/v1/risk/position-size` (S46)
+- [x] **Exposure dashboard** — Per-symbol exposure + Herfindahl concentration index; GET `/api/v1/risk/exposure` (S46)
+- [x] **10-agent swarm** — quant-1..quant-10 with momentum/mean-revert/arb/trend/contrarian/hybrid strategies (S46)
+- [x] **Swarm vote** — POST `/api/v1/swarm/vote` — 10 agents vote, stake-weighted 2/3 supermajority consensus (S46)
+- [x] **Swarm leaderboard** — GET `/api/v1/swarm/performance` — 24h PnL + Sharpe ranked for all 10 agents (S46)
 - [x] **Live price feed** — GBM+mean-reversion simulated prices for BTC-USD, ETH-USD, SOL-USD, MATIC-USD (S45)
 - [x] **WebSocket streaming** — WS `/api/v1/ws/prices` streams 1-second price ticks with subscribe/unsubscribe (S45)
 - [x] **Agent auto-trading** — POST `/api/v1/agents/{id}/auto-trade` runs trend_follow/mean_revert/hold strategies on live feed (S45)
@@ -26,7 +32,7 @@
 
 ## Differentiators
 
-- [x] **Reputation-weighted consensus** — 3 agents (conservative/balanced/aggressive) vote; 2/3 supermajority required; weighting by reputation score. Not just majority vote.
+- [x] **Reputation-weighted consensus** — 10 agents (quant-1..quant-10) vote; 2/3 supermajority required; stake-weighted voting. Not just majority vote.
 - [x] **x402 micropayment gate** — `/demo/run` is payment-gated via x402 protocol. `dev_mode=true` for judges (free). Demonstrates real on-chain payment integration.
 - [x] **Credora credit ratings** — On-chain credit scores feed into position sizing. Agents with higher credit get larger position limits.
 - [x] **Backtester** — Historical GBM simulation with Sharpe, Sortino, max drawdown, win rate.

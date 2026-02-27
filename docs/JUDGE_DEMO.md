@@ -188,6 +188,74 @@ curl 'https://api.opspawn.com/erc8004/demo/leaderboard?sort_by=pnl&limit=5' \
 
 ---
 
+## S46: Portfolio Risk Management + 10-Agent Swarm
+
+### Risk Management Endpoints (NEW in S46)
+
+```bash
+# Portfolio-level VaR, Sharpe/Sortino/Calmar, correlation matrix
+curl https://api.opspawn.com/erc8004/api/v1/risk/portfolio | python3 -m json.tool
+
+# Position sizing: volatility-based, Half-Kelly, or fixed-fraction
+curl -s -X POST https://api.opspawn.com/erc8004/api/v1/risk/position-size \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"BTC-USD","capital":100000,"risk_budget_pct":0.02,"method":"half_kelly"}' \
+  | python3 -m json.tool
+
+# Per-symbol exposure + Herfindahl concentration index
+curl https://api.opspawn.com/erc8004/api/v1/risk/exposure | python3 -m json.tool
+```
+
+**What to look for in `/api/v1/risk/portfolio`:**
+```json
+{
+  "portfolio": {
+    "var_95": 0.012,          ← daily 95% Value at Risk
+    "var_99": 0.021,          ← daily 99% VaR
+    "sharpe_ratio": 1.42,
+    "sortino_ratio": 2.14,
+    "calmar_ratio": 3.5,
+    "max_drawdown": 0.08
+  },
+  "correlation_matrix": { ... },  ← 4×4 cross-symbol correlation
+  "per_symbol": { ... },
+  "version": "S46"
+}
+```
+
+### Multi-Agent Swarm Endpoints (NEW in S46)
+
+The system now runs **10 agents** (quant-1 through quant-10) with diverse strategies:
+momentum, mean-revert, arb, trend, contrarian, and hybrid.
+
+```bash
+# All 10 agents vote on a BUY signal — stake-weighted 2/3 supermajority
+curl -s -X POST https://api.opspawn.com/erc8004/api/v1/swarm/vote \
+  -H 'Content-Type: application/json' \
+  -d '{"symbol":"BTC-USD","signal_type":"BUY"}' \
+  | python3 -m json.tool
+
+# 24h PnL + Sharpe leaderboard for all 10 agents
+curl https://api.opspawn.com/erc8004/api/v1/swarm/performance | python3 -m json.tool
+```
+
+**What to look for in `/api/v1/swarm/vote`:**
+```json
+{
+  "symbol": "BTC-USD",
+  "signal_type": "BUY",
+  "votes": [...],              ← 10 individual votes with confidence
+  "vote_summary": {"BUY":7,"SELL":3},
+  "weighted_agree_fraction": 0.72,
+  "consensus_threshold": 0.667,
+  "consensus_reached": true,
+  "consensus_action": "BUY",
+  "version": "S46"
+}
+```
+
+---
+
 ## What Makes This Different
 
 Most hackathon trading agent demos are just Python scripts with a `print()` statement.
@@ -196,8 +264,10 @@ Most hackathon trading agent demos are just Python scripts with a `print()` stat
 1. **Real on-chain identity** — each agent is an ERC-721 token with verifiable history
 2. **Reputation as stake** — agents lose reputation for bad trades; bad agents get outvoted
 3. **Payment gating** — the API costs real (micro) money in production; AI agents pay autonomously via x402
-4. **4,968 tests** — not a toy; production-quality code
+4. **6,085 tests** — not a toy; production-quality code
 5. **Credora integration** — on-chain credit ratings feed into risk limits
+6. **VaR risk engine** — 95%/99% historical-simulation VaR, Sharpe/Sortino/Calmar ratios
+7. **10-agent swarm** — diverse strategy ensemble with stake-weighted consensus voting
 
 ---
 

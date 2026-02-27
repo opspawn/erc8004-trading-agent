@@ -109,7 +109,7 @@ def server():
 
 class TestS41Constants:
     def test_server_version_is_s41(self):
-        assert SERVER_VERSION in ("S41", "S42", "S43", "S44", "S45")
+        assert SERVER_VERSION in ("S41", "S42", "S43", "S44", "S45", "S46")
 
     def test_s41_test_count_at_least_5100(self):
         assert _S41_TEST_COUNT >= 5100
@@ -958,7 +958,7 @@ class TestHealthS41:
 
     def test_health_version_is_s41(self, server):
         body = _get(f"{server}/health")
-        assert body["version"] in ("S41", "S42", "S43", "S44", "S45")
+        assert body["version"] in ("S41", "S42", "S43", "S44", "S45", "S46")
 
     def test_health_test_count_gte_5100(self, server):
         body = _get(f"{server}/health")
@@ -970,7 +970,7 @@ class TestHealthS41:
 
     def test_demo_health_same(self, server):
         body = _get(f"{server}/demo/health")
-        assert body["version"] in ("S41", "S42", "S43", "S44", "S45")
+        assert body["version"] in ("S41", "S42", "S43", "S44", "S45", "S46")
         assert body.get("tests", 0) >= 5100
 
     def test_root_test_count(self, server):
