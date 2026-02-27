@@ -2883,6 +2883,595 @@ def get_performance_attribution(period: str = "24h") -> Dict[str, Any]:
     }
 
 
+# ── S38: Strategy Performance Attribution ─────────────────────────────────────
+# GET /demo/strategy/performance-attribution
+# Breaks down P&L by strategy type, time period, and risk bucket (volatility tier).
+
+_S38_STRATEGIES = [
+    "momentum",
+    "mean_reversion",
+    "vol_breakout",
+    "trend_following",
+    "sentiment",
+    "ensemble",
+]
+_S38_PERIODS = {"1h", "24h", "7d"}
+_S38_DEFAULT_PERIOD = "24h"
+_S38_RISK_BUCKETS = ["low", "medium", "high"]
+
+# Realistic annualised vol thresholds (proxy for bucket label)
+_S38_VOL_THRESHOLD_LOW = 0.15   # <15% annualised vol → low
+_S38_VOL_THRESHOLD_HIGH = 0.35  # >35% annualised vol → high
+
+
+def get_strategy_performance_attribution(
+    period: str = _S38_DEFAULT_PERIOD,
+) -> Dict[str, Any]:
+    """
+    Return P&L attribution broken down by:
+      - Strategy type (momentum, mean_reversion, vol_breakout, etc.)
+      - Time period (1h / 24h / 7d)
+      - Risk bucket (low / medium / high volatility)
+
+    Returns deterministic-but-realistic mock data seeded by period and UTC hour.
+    The seed rotates hourly so repeated calls within the same hour are stable.
+    """
+    if period not in _S38_PERIODS:
+        raise ValueError(
+            f"period must be one of {sorted(_S38_PERIODS)}, got {period!r}"
+        )
+
+    period_hours = {"1h": 1, "24h": 24, "7d": 168}[period]
+    # Seed rotates each hour so data is stable within an hour but refreshes automatically
+    hour_bucket = int(time.time() // 3600)
+    seed_base = f"s38:{period}:{hour_bucket}"
+
+    def _det(key: str, lo: float, hi: float, decimals: int = 4) -> float:
+        """Deterministic float in [lo, hi] derived from md5 of seed_base+key."""
+        digest = int(hashlib.md5(f"{seed_base}:{key}".encode()).hexdigest()[:8], 16)
+        return round(lo + (digest % 100_000) / 100_000.0 * (hi - lo), decimals)
+
+    def _det_int(key: str, lo: int, hi: int) -> int:
+        digest = int(hashlib.md5(f"{seed_base}:{key}".encode()).hexdigest()[:8], 16)
+        return lo + (digest % (hi - lo + 1))
+
+    # ── 1. Strategy breakdown ──────────────────────────────────────────────────
+    strategy_breakdown: Dict[str, Any] = {}
+    total_strategy_pnl = 0.0
+    for strat in _S38_STRATEGIES:
+        scale = period_hours / 24.0
+        pnl = _det(f"strat.pnl.{strat}", -180.0, 720.0) * scale
+        trades = max(1, _det_int(f"strat.trades.{strat}", 3, 45)) * max(1, int(scale))
+        win_rate = _det(f"strat.wr.{strat}", 0.38, 0.78)
+        sharpe = _det(f"strat.sharpe.{strat}", -0.4, 3.2)
+        alpha = _det(f"strat.alpha.{strat}", -0.3, 1.4)
+        beta = _det(f"strat.beta.{strat}", -0.8, 1.2)
+        max_dd = _det(f"strat.dd.{strat}", 0.005, 0.18)
+        strategy_breakdown[strat] = {
+            "pnl_usd": round(pnl, 2),
+            "trades": trades,
+            "win_rate": win_rate,
+            "sharpe_ratio": sharpe,
+            "alpha_contribution": alpha,
+            "beta_exposure": beta,
+            "max_drawdown_pct": round(max_dd * 100, 2),
+        }
+        total_strategy_pnl += pnl
+
+    # ── 2. Time-period sub-breakdown (hourly / daily / weekly slices) ──────────
+    period_breakdown: Dict[str, Any] = {}
+    if period == "1h":
+        # Single bucket — the hour itself
+        period_breakdown["hourly"] = {
+            "pnl_usd": round(total_strategy_pnl, 2),
+            "trades": _det_int("period.hourly.trades", 1, 12),
+            "avg_trade_duration_minutes": _det("period.hourly.dur", 2.0, 30.0, 1),
+        }
+    elif period == "24h":
+        # 24 hourly buckets → summarised as morning / afternoon / evening / night
+        sessions = ["morning", "afternoon", "evening", "night"]
+        for sess in sessions:
+            frac = _det(f"period.session.{sess}", 0.1, 0.4)
+            period_breakdown[sess] = {
+                "pnl_usd": round(total_strategy_pnl * frac, 2),
+                "trades": _det_int(f"period.session.{sess}.trades", 2, 18),
+                "hours": 6,
+            }
+    else:  # 7d
+        # Daily buckets Mon–Sun
+        days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        for day in days:
+            frac = _det(f"period.day.{day}", 0.05, 0.25)
+            period_breakdown[day] = {
+                "pnl_usd": round(total_strategy_pnl * frac, 2),
+                "trades": _det_int(f"period.day.{day}.trades", 4, 32),
+                "hours": 24,
+            }
+
+    # ── 3. Risk bucket breakdown (low / medium / high volatility) ─────────────
+    risk_bucket_breakdown: Dict[str, Any] = {}
+    bucket_pnl_sum = 0.0
+    for bucket in _S38_RISK_BUCKETS:
+        scale = period_hours / 24.0
+        pnl = _det(f"risk.pnl.{bucket}", -120.0, 500.0) * scale
+        trades = max(1, _det_int(f"risk.trades.{bucket}", 2, 30))
+        win_rate = _det(f"risk.wr.{bucket}", 0.35, 0.80)
+        # Vol range per bucket
+        if bucket == "low":
+            avg_vol = _det(f"risk.vol.{bucket}", 0.05, _S38_VOL_THRESHOLD_LOW)
+        elif bucket == "medium":
+            avg_vol = _det(
+                f"risk.vol.{bucket}", _S38_VOL_THRESHOLD_LOW, _S38_VOL_THRESHOLD_HIGH
+            )
+        else:
+            avg_vol = _det(f"risk.vol.{bucket}", _S38_VOL_THRESHOLD_HIGH, 0.65)
+        kelly_fraction = _det(f"risk.kelly.{bucket}", 0.05, 0.40)
+        risk_bucket_breakdown[bucket] = {
+            "pnl_usd": round(pnl, 2),
+            "trades": trades,
+            "win_rate": win_rate,
+            "avg_annualised_vol": round(avg_vol, 4),
+            "avg_kelly_fraction": round(kelly_fraction, 4),
+            "vol_threshold_label": (
+                f"< {_S38_VOL_THRESHOLD_LOW:.0%}" if bucket == "low"
+                else f"{_S38_VOL_THRESHOLD_LOW:.0%}–{_S38_VOL_THRESHOLD_HIGH:.0%}"
+                if bucket == "medium"
+                else f"> {_S38_VOL_THRESHOLD_HIGH:.0%}"
+            ),
+        }
+        bucket_pnl_sum += pnl
+
+    # ── 4. Top/bottom strategy ranking ────────────────────────────────────────
+    ranked = sorted(
+        strategy_breakdown.items(), key=lambda kv: kv[1]["pnl_usd"], reverse=True
+    )
+    top_strategy = ranked[0][0] if ranked else None
+    bottom_strategy = ranked[-1][0] if ranked else None
+
+    return {
+        "period": period,
+        "period_hours": period_hours,
+        "total_pnl_usd": round(total_strategy_pnl, 2),
+        "strategy_breakdown": strategy_breakdown,
+        "period_breakdown": period_breakdown,
+        "risk_bucket_breakdown": risk_bucket_breakdown,
+        "summary": {
+            "top_strategy": top_strategy,
+            "bottom_strategy": bottom_strategy,
+            "strategies_profitable": sum(
+                1 for v in strategy_breakdown.values() if v["pnl_usd"] > 0
+            ),
+            "strategies_total": len(_S38_STRATEGIES),
+            "high_vol_pnl_usd": round(
+                risk_bucket_breakdown.get("high", {}).get("pnl_usd", 0.0), 2
+            ),
+            "low_vol_pnl_usd": round(
+                risk_bucket_breakdown.get("low", {}).get("pnl_usd", 0.0), 2
+            ),
+        },
+        "generated_at": time.time(),
+    }
+
+
+# ── S39: Live Market Simulation ───────────────────────────────────────────────
+# POST /demo/live/simulate  → run a simulated market session, return tick-by-tick
+# GET  /demo/portfolio/snapshot → current positions, unrealized P&L, Sharpe, etc.
+# GET  /demo/strategy/compare   → side-by-side metrics for all active strategies
+
+_S39_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD", "AVAX/USD", "MATIC/USD"]
+_S39_STRATEGIES = ["momentum", "mean_reversion", "ml_ensemble"]
+_S39_SIM_PERIODS = {"1m", "5m", "15m", "1h"}
+_S39_DEFAULT_SIM_TICKS = 20
+_S39_MAX_SIM_TICKS = 100
+_S39_DEFAULT_CAPITAL = 10_000.0
+
+
+def _s39_seed(key: str, lo: float, hi: float, decimals: int = 4) -> float:
+    """Deterministic float in [lo, hi] seeded by key + UTC hour."""
+    hour_bucket = int(time.time() // 3600)
+    digest = int(hashlib.md5(f"s39:{hour_bucket}:{key}".encode()).hexdigest()[:8], 16)
+    return round(lo + (digest % 1_000_000) / 1_000_000.0 * (hi - lo), decimals)
+
+
+def _s39_seed_int(key: str, lo: int, hi: int) -> int:
+    hour_bucket = int(time.time() // 3600)
+    digest = int(hashlib.md5(f"s39:{hour_bucket}:{key}".encode()).hexdigest()[:8], 16)
+    return lo + digest % (hi - lo + 1)
+
+
+def _generate_ohlcv(symbol: str, ticks: int, seed: int) -> List[Dict[str, Any]]:
+    """
+    Generate realistic OHLCV bars using a GBM-like random walk.
+    Deterministic for a given symbol + ticks + seed combination.
+    """
+    rng = random.Random(seed + hash(symbol) % 100_000)
+    base_prices = {
+        "BTC/USD": 45_000.0,
+        "ETH/USD": 2_500.0,
+        "SOL/USD": 120.0,
+        "AVAX/USD": 35.0,
+        "MATIC/USD": 0.85,
+    }
+    price = base_prices.get(symbol, 1_000.0)
+    daily_vol = 0.40  # 40% annualised vol → realistic crypto, produces visible moves
+    bars = []
+    ts = int(time.time()) - ticks * 60
+    for i in range(ticks):
+        ret = rng.gauss(0, daily_vol / math.sqrt(365))  # 1-day equivalent step
+        open_p = round(price, 6)
+        close_p = round(price * (1 + ret), 6)
+        high_p = round(max(open_p, close_p) * (1 + abs(rng.gauss(0, 0.002))), 6)
+        low_p = round(min(open_p, close_p) * (1 - abs(rng.gauss(0, 0.002))), 6)
+        volume = round(rng.uniform(0.5, 50.0), 4)
+        bars.append({
+            "tick": i + 1,
+            "timestamp": ts + i * 60,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": close_p,
+            "volume": volume,
+        })
+        price = close_p
+    return bars
+
+
+def _decide_action(bar: Dict[str, Any], prev_bar: Optional[Dict[str, Any]],
+                   strategy: str, rng: random.Random) -> Dict[str, Any]:
+    """Apply a simple strategy rule to produce a BUY/SELL/HOLD decision."""
+    if prev_bar is None:
+        return {"action": "HOLD", "confidence": 0.5, "reason": "no prior bar"}
+
+    ret = (bar["close"] - prev_bar["close"]) / prev_bar["close"]
+
+    if strategy == "momentum":
+        if ret > 0.003:
+            action, confidence = "BUY", min(0.99, 0.6 + ret * 20)
+            reason = f"positive momentum ret={ret:.4f}"
+        elif ret < -0.003:
+            action, confidence = "SELL", min(0.99, 0.6 + abs(ret) * 20)
+            reason = f"negative momentum ret={ret:.4f}"
+        else:
+            action, confidence = "HOLD", 0.5 + abs(ret) * 10
+            reason = "momentum neutral"
+
+    elif strategy == "mean_reversion":
+        if ret < -0.005:
+            action, confidence = "BUY", min(0.99, 0.55 + abs(ret) * 15)
+            reason = f"oversold bounce candidate ret={ret:.4f}"
+        elif ret > 0.005:
+            action, confidence = "SELL", min(0.99, 0.55 + ret * 15)
+            reason = f"overbought reversal candidate ret={ret:.4f}"
+        else:
+            action, confidence = "HOLD", 0.55
+            reason = "within normal range"
+
+    else:  # ml_ensemble — blend of both with noise
+        base_ret = ret + rng.gauss(0, 0.001)
+        if base_ret > 0.002:
+            action, confidence = "BUY", min(0.99, 0.65 + base_ret * 18)
+            reason = f"ensemble BUY signal strength={confidence:.4f}"
+        elif base_ret < -0.002:
+            action, confidence = "SELL", min(0.99, 0.65 + abs(base_ret) * 18)
+            reason = f"ensemble SELL signal strength={confidence:.4f}"
+        else:
+            action, confidence = "HOLD", 0.60
+            reason = "ensemble neutral"
+
+    return {
+        "action": action,
+        "confidence": round(confidence, 4),
+        "reason": reason,
+        "return_pct": round(ret * 100, 4),
+    }
+
+
+def run_live_simulation(
+    ticks: int = _S39_DEFAULT_SIM_TICKS,
+    seed: int = 42,
+    symbol: str = "BTC/USD",
+    strategy: str = "momentum",
+    initial_capital: float = _S39_DEFAULT_CAPITAL,
+) -> Dict[str, Any]:
+    """
+    Run a simulated market session and return tick-by-tick analysis with P&L.
+
+    Args:
+        ticks: Number of price ticks (1–100)
+        seed: RNG seed for reproducibility
+        symbol: Trading pair (BTC/USD, ETH/USD, SOL/USD, AVAX/USD, MATIC/USD)
+        strategy: Strategy name (momentum / mean_reversion / ml_ensemble)
+        initial_capital: Starting capital in USD
+
+    Returns:
+        Dict with session metadata, tick_data (list), summary with P&L stats.
+    """
+    ticks = max(1, min(int(ticks), _S39_MAX_SIM_TICKS))
+    if symbol not in _S39_SYMBOLS:
+        symbol = "BTC/USD"
+    if strategy not in _S39_STRATEGIES:
+        strategy = "momentum"
+
+    bars = _generate_ohlcv(symbol, ticks, seed)
+    rng = random.Random(seed)
+
+    cash = initial_capital
+    position = 0.0  # units held
+    trades: List[Dict[str, Any]] = []
+    tick_data: List[Dict[str, Any]] = []
+    prev_bar: Optional[Dict[str, Any]] = None
+    entry_price = 0.0
+    trade_id = 0
+
+    for bar in bars:
+        decision = _decide_action(bar, prev_bar, strategy, rng)
+        pnl_delta = 0.0
+        trade_event = None
+
+        if decision["action"] == "BUY" and cash >= bar["close"] * 0.1:
+            # Buy ~5% of available capital worth
+            spend = cash * 0.05
+            qty = spend / bar["close"]
+            position += qty
+            cash -= spend
+            entry_price = bar["close"]
+            trade_id += 1
+            trade_event = {
+                "trade_id": trade_id,
+                "type": "BUY",
+                "price": bar["close"],
+                "qty": round(qty, 6),
+                "value": round(spend, 2),
+            }
+            trades.append(trade_event)
+        elif decision["action"] == "SELL" and position > 0:
+            # Sell 50% of position
+            sell_qty = position * 0.5
+            proceeds = sell_qty * bar["close"]
+            pnl_delta = proceeds - sell_qty * entry_price if entry_price else 0.0
+            position -= sell_qty
+            cash += proceeds
+            trade_id += 1
+            trade_event = {
+                "trade_id": trade_id,
+                "type": "SELL",
+                "price": bar["close"],
+                "qty": round(sell_qty, 6),
+                "value": round(proceeds, 2),
+                "pnl": round(pnl_delta, 2),
+            }
+            trades.append(trade_event)
+
+        portfolio_value = cash + position * bar["close"]
+        tick_data.append({
+            "tick": bar["tick"],
+            "timestamp": bar["timestamp"],
+            "ohlcv": bar,
+            "decision": decision,
+            "trade": trade_event,
+            "portfolio": {
+                "cash": round(cash, 2),
+                "position_units": round(position, 6),
+                "position_value": round(position * bar["close"], 2),
+                "total_value": round(portfolio_value, 2),
+                "pnl_delta": round(pnl_delta, 2),
+            },
+        })
+        prev_bar = bar
+
+    final_value = cash + position * bars[-1]["close"]
+    total_pnl = final_value - initial_capital
+    total_return_pct = (total_pnl / initial_capital) * 100
+
+    # Sharpe-like: mean tick return / std tick return * sqrt(ticks)
+    tick_returns = []
+    for i in range(1, len(tick_data)):
+        v0 = tick_data[i - 1]["portfolio"]["total_value"]
+        v1 = tick_data[i]["portfolio"]["total_value"]
+        if v0 > 0:
+            tick_returns.append((v1 - v0) / v0)
+
+    if tick_returns and len(tick_returns) > 1:
+        mean_r = sum(tick_returns) / len(tick_returns)
+        std_r = math.sqrt(sum((r - mean_r) ** 2 for r in tick_returns) / len(tick_returns))
+        sharpe = (mean_r / std_r * math.sqrt(len(tick_returns))) if std_r > 1e-10 else 0.0
+    else:
+        sharpe = 0.0
+
+    # Max drawdown
+    peak = initial_capital
+    max_dd = 0.0
+    for td in tick_data:
+        v = td["portfolio"]["total_value"]
+        if v > peak:
+            peak = v
+        dd = (peak - v) / peak if peak > 0 else 0.0
+        if dd > max_dd:
+            max_dd = dd
+
+    winning_trades = [t for t in trades if t.get("type") == "SELL" and t.get("pnl", 0) > 0]
+    sell_trades = [t for t in trades if t.get("type") == "SELL"]
+    win_rate = len(winning_trades) / len(sell_trades) if sell_trades else 0.0
+
+    return {
+        "session_id": f"sim-{seed}-{symbol.replace('/', '')}-{strategy}",
+        "symbol": symbol,
+        "strategy": strategy,
+        "ticks": ticks,
+        "seed": seed,
+        "initial_capital": initial_capital,
+        "tick_data": tick_data,
+        "trades": trades,
+        "summary": {
+            "final_value": round(final_value, 2),
+            "total_pnl": round(total_pnl, 2),
+            "total_return_pct": round(total_return_pct, 4),
+            "sharpe_ratio": round(sharpe, 4),
+            "max_drawdown_pct": round(max_dd * 100, 4),
+            "win_rate": round(win_rate, 4),
+            "total_trades": len(trades),
+            "buy_trades": len([t for t in trades if t.get("type") == "BUY"]),
+            "sell_trades": len(sell_trades),
+            "winning_trades": len(winning_trades),
+        },
+        "generated_at": time.time(),
+    }
+
+
+# ── S39: Portfolio Snapshot ────────────────────────────────────────────────────
+
+# In-memory demo portfolio state (seeded, updates on each simulate call)
+_S39_PORTFOLIO_LOCK = threading.Lock()
+_S39_PORTFOLIO_STATE: Dict[str, Any] = {}
+
+
+def _build_default_portfolio_snapshot() -> Dict[str, Any]:
+    """Build a realistic default portfolio snapshot for GET /demo/portfolio/snapshot."""
+    positions = []
+    symbols = ["BTC/USD", "ETH/USD", "SOL/USD"]
+    base_prices = {"BTC/USD": 45_200.0, "ETH/USD": 2_480.0, "SOL/USD": 118.5}
+    total_unrealized = 0.0
+    total_value = 0.0
+
+    for sym in symbols:
+        entry = base_prices[sym] * _s39_seed(f"entry.{sym}", 0.94, 0.98)
+        current = base_prices[sym] * _s39_seed(f"current.{sym}", 0.98, 1.04)
+        qty = _s39_seed(f"qty.{sym}", 0.05, 2.0, decimals=6)
+        unrealized = (current - entry) * qty
+        market_value = current * qty
+        total_unrealized += unrealized
+        total_value += market_value
+        positions.append({
+            "symbol": sym,
+            "qty": round(qty, 6),
+            "entry_price": round(entry, 2),
+            "current_price": round(current, 2),
+            "market_value": round(market_value, 2),
+            "unrealized_pnl": round(unrealized, 2),
+            "unrealized_pct": round((current - entry) / entry * 100, 4),
+        })
+
+    cash = _s39_seed("cash", 3_000.0, 8_000.0, decimals=2)
+    total_portfolio = total_value + cash
+    initial = _S39_DEFAULT_CAPITAL
+    total_return = (total_portfolio - initial) / initial * 100
+
+    daily_returns = [_s39_seed(f"dret.{i}", -0.02, 0.03, decimals=6) for i in range(30)]
+    mean_r = sum(daily_returns) / len(daily_returns)
+    std_r = math.sqrt(sum((r - mean_r) ** 2 for r in daily_returns) / len(daily_returns))
+    sharpe = (mean_r / std_r * math.sqrt(252)) if std_r > 1e-10 else 0.0
+
+    peak = initial
+    max_dd = 0.0
+    running = initial
+    for r in daily_returns:
+        running *= (1 + r)
+        if running > peak:
+            peak = running
+        dd = (peak - running) / peak
+        if dd > max_dd:
+            max_dd = dd
+
+    wins = sum(1 for r in daily_returns if r > 0)
+    win_rate = wins / len(daily_returns)
+
+    return {
+        "source": "live_demo",
+        "portfolio_id": "demo-portfolio-001",
+        "positions": positions,
+        "cash": round(cash, 2),
+        "total_position_value": round(total_value, 2),
+        "total_portfolio_value": round(total_portfolio, 2),
+        "total_unrealized_pnl": round(total_unrealized, 2),
+        "total_return_pct": round(total_return, 4),
+        "metrics": {
+            "sharpe_ratio": round(sharpe, 4),
+            "max_drawdown_pct": round(max_dd * 100, 4),
+            "win_rate": round(win_rate, 4),
+            "active_positions": len(positions),
+            "observation_days": 30,
+        },
+        "generated_at": time.time(),
+    }
+
+
+def get_portfolio_snapshot() -> Dict[str, Any]:
+    """
+    Return current portfolio snapshot: positions, unrealized P&L, Sharpe, drawdown, win rate.
+    If a live simulation has updated state, merge it in.
+    """
+    with _S39_PORTFOLIO_LOCK:
+        base = _build_default_portfolio_snapshot()
+        if _S39_PORTFOLIO_STATE:
+            # Overlay any live-sim updated fields
+            base.update({k: v for k, v in _S39_PORTFOLIO_STATE.items()
+                         if k in ("last_sim_session_id", "last_sim_pnl", "last_sim_return_pct")})
+    return base
+
+
+# ── S39: Strategy Comparison Dashboard ────────────────────────────────────────
+
+_S39_COMPARE_STRATEGIES = [
+    {"id": "momentum", "label": "Momentum"},
+    {"id": "mean_reversion", "label": "Mean Reversion"},
+    {"id": "ml_ensemble", "label": "ML Ensemble"},
+]
+
+
+def get_strategy_comparison() -> Dict[str, Any]:
+    """
+    Return side-by-side performance metrics for all active strategies.
+    Metrics: Sharpe, Sortino, max drawdown, win rate, total return, trade count, avg P&L/trade.
+    Data is deterministic but refreshes hourly.
+    """
+    results = []
+    for strat in _S39_COMPARE_STRATEGIES:
+        sid = strat["id"]
+        sharpe = _s39_seed(f"cmp.sharpe.{sid}", 0.3, 2.8)
+        sortino = _s39_seed(f"cmp.sortino.{sid}", 0.4, 3.5)
+        max_dd = _s39_seed(f"cmp.maxdd.{sid}", 2.0, 18.0)
+        win_rate = _s39_seed(f"cmp.wr.{sid}", 0.42, 0.72)
+        total_return = _s39_seed(f"cmp.ret.{sid}", -5.0, 32.0)
+        trade_count = _s39_seed_int(f"cmp.tc.{sid}", 40, 250)
+        avg_pnl = _s39_seed(f"cmp.apnl.{sid}", -20.0, 120.0)
+        calmar = round(total_return / max_dd, 4) if max_dd > 0 else 0.0
+
+        results.append({
+            "strategy_id": sid,
+            "label": strat["label"],
+            "metrics": {
+                "sharpe_ratio": sharpe,
+                "sortino_ratio": sortino,
+                "max_drawdown_pct": max_dd,
+                "win_rate": win_rate,
+                "total_return_pct": total_return,
+                "trade_count": trade_count,
+                "avg_pnl_per_trade": avg_pnl,
+                "calmar_ratio": calmar,
+            },
+        })
+
+    # Rank by Sharpe ratio
+    ranked = sorted(results, key=lambda x: x["metrics"]["sharpe_ratio"], reverse=True)
+    for rank_i, item in enumerate(ranked, start=1):
+        item["rank"] = rank_i
+
+    best = ranked[0]
+    worst = ranked[-1]
+    return {
+        "comparison_id": f"cmp-{int(time.time() // 3600)}",
+        "strategies": ranked,
+        "summary": {
+            "best_strategy": best["strategy_id"],
+            "best_sharpe": best["metrics"]["sharpe_ratio"],
+            "worst_strategy": worst["strategy_id"],
+            "worst_sharpe": worst["metrics"]["sharpe_ratio"],
+            "strategy_count": len(ranked),
+        },
+        "generated_at": time.time(),
+    }
+
+
 # ── S32: Live Trading Feed ─────────────────────────────────────────────────────
 # Rolling event buffer for GET /demo/live/feed
 # Events: agent_vote, consensus_reached, trade_executed, reputation_updated
@@ -5506,6 +6095,20 @@ class _DemoHandler(BaseHTTPRequestHandler):
                 self._send_json(200, get_alpha_decay(strategy_id))
             else:
                 self._send_json(404, {"error": f"Not found: {path}"})
+        # S38: Strategy performance attribution by type, period, and risk bucket
+        elif path in ("/demo/strategy/performance-attribution",):
+            period = qs.get("period", [_S38_DEFAULT_PERIOD])[0]
+            try:
+                result = get_strategy_performance_attribution(period=period)
+                self._send_json(200, result)
+            except ValueError as exc:
+                self._send_json(400, {"error": str(exc)})
+        # S39: Portfolio snapshot
+        elif path in ("/demo/portfolio/snapshot",):
+            self._send_json(200, get_portfolio_snapshot())
+        # S39: Strategy comparison dashboard
+        elif path in ("/demo/strategy/compare",):
+            self._send_json(200, get_strategy_comparison())
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -5576,6 +6179,9 @@ class _DemoHandler(BaseHTTPRequestHandler):
         # S37: Cross-train agents
         elif path in ("/demo/agents/cross-train",):
             self._handle_cross_train()
+        # S39: Live market simulation
+        elif path in ("/demo/live/simulate",):
+            self._handle_live_simulate()
         else:
             self._send_json(404, {"error": f"Not found: {path}"})
 
@@ -6325,6 +6931,59 @@ class _DemoHandler(BaseHTTPRequestHandler):
             self._send_json(200, result)
         except ValueError as exc:
             self._send_json(400, {"error": str(exc)})
+        except Exception as exc:
+            self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
+
+    def _handle_live_simulate(self) -> None:
+        """Handle POST /demo/live/simulate — run a simulated market session."""
+        try:
+            content_length = int(self.headers.get("Content-Length", "0"))
+            body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+            body = json.loads(body_bytes or b"{}")
+        except (json.JSONDecodeError, ValueError):
+            self._send_json(400, {"error": "Invalid JSON body"})
+            return
+
+        ticks = body.get("ticks", _S39_DEFAULT_SIM_TICKS)
+        seed = body.get("seed", 42)
+        symbol = body.get("symbol", "BTC/USD")
+        strategy = body.get("strategy", "momentum")
+        initial_capital = body.get("initial_capital", _S39_DEFAULT_CAPITAL)
+
+        try:
+            ticks = int(ticks)
+            seed = int(seed)
+            initial_capital = float(initial_capital)
+        except (TypeError, ValueError) as exc:
+            self._send_json(400, {"error": f"Invalid parameter: {exc}"})
+            return
+
+        if ticks < 1 or ticks > _S39_MAX_SIM_TICKS:
+            self._send_json(400, {
+                "error": f"ticks must be between 1 and {_S39_MAX_SIM_TICKS}, got {ticks}"
+            })
+            return
+
+        if initial_capital <= 0:
+            self._send_json(400, {"error": "initial_capital must be positive"})
+            return
+
+        try:
+            result = run_live_simulation(
+                ticks=ticks,
+                seed=seed,
+                symbol=symbol,
+                strategy=strategy,
+                initial_capital=initial_capital,
+            )
+            # Update portfolio state so /demo/portfolio/snapshot reflects the sim
+            with _S39_PORTFOLIO_LOCK:
+                _S39_PORTFOLIO_STATE.update({
+                    "last_sim_session_id": result["session_id"],
+                    "last_sim_pnl": result["summary"]["total_pnl"],
+                    "last_sim_return_pct": result["summary"]["total_return_pct"],
+                })
+            self._send_json(200, result)
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "type": type(exc).__name__})
 

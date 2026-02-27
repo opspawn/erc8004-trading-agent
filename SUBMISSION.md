@@ -82,7 +82,15 @@ enabled so judges can call it without a wallet.
 
 ## Test Evidence
 
-**Total tests: 3,541 passing** (verified by running `python3 -m pytest --tb=no -q`)
+**Total tests: 4,908 passing** (S39 — verified 2026-02-26 by running `python3 -m pytest --tb=no -q`)
+
+| Sprint | Tests | Key additions |
+|--------|-------|---------------|
+| S01–S30 | 3,541 | Core pipeline, consensus, reputation, x402 |
+| S31–S36 | 4,658 | Attribution, live feed, leaderboard, backtest |
+| S37 | 4,729 | Risk dashboard, ensemble vote, alpha decay, cross-train |
+| S38 | 4,800 | Strategy performance attribution (by type/period/risk bucket), demo script V2, pitch deck |
+| **S39** | **4,908** | Live market simulation, portfolio snapshot, strategy comparison dashboard (+108 tests) |
 
 | Test File | Coverage Area |
 |-----------|---------------|
@@ -99,11 +107,14 @@ enabled so judges can call it without a wallet.
 | `test_health_api.py` | REST health/metrics endpoints |
 | `test_risk_dashboard.py` | Risk data API, VaR, Sharpe |
 | `test_credora_client.py` + extensions | Credit tiers, Kelly multipliers |
-| ... + 37 more test files | Full coverage across all modules |
+| `test_s37_risk_ensemble.py` | Risk dashboard, ensemble vote, alpha decay, cross-train |
+| `test_s38_performance.py` | Strategy attribution by type, period, risk bucket (71 tests) |
+| `test_s39_live_sim.py` | Live market sim, portfolio snapshot, strategy compare (108 tests) |
+| ... + 45 more test files | Full coverage across all modules |
 
 ```bash
 cd agent && python3 -m pytest tests/ -q --tb=no
-# 3541 passed in ~35s
+# 4908 passed in ~60s
 ```
 
 ---
@@ -167,6 +178,10 @@ All endpoints use `dev_mode=true` — free for judges, no wallet required.
 | `GET`  | `https://api.opspawn.com/erc8004/demo/leaderboard` | **Agent leaderboard** — top 5 agents by Sortino ratio |
 | `POST` | `https://api.opspawn.com/erc8004/demo/compare` | **Side-by-side comparison** — `{"agent_ids": ["id1","id2"]}` |
 | `GET`  | `https://api.opspawn.com/erc8004/demo/stream` | **SSE stream** — real-time events when `/demo/run` completes |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/strategy/performance-attribution` | **S38: Strategy attribution** — P&L by type, period, risk bucket — `?period=1h\|24h\|7d` |
+| `POST` | `https://api.opspawn.com/erc8004/demo/live/simulate` | **S39: Live simulation** — tick-by-tick session with P&L, `{ticks,seed,symbol,strategy,initial_capital}` |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/portfolio/snapshot` | **S39: Portfolio snapshot** — positions, unrealized P&L, Sharpe, drawdown, win rate |
+| `GET`  | `https://api.opspawn.com/erc8004/demo/strategy/compare` | **S39: Strategy comparison** — side-by-side metrics for all active strategies (ranked by Sharpe) |
 
 ### Prerequisites
 - Python 3.12+, Node.js 22+
